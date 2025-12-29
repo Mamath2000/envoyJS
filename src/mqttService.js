@@ -4,6 +4,7 @@ import mqtt from "mqtt";
 
 import { sleep } from "./utils.js";
 import { publishHaAutodiscoveryDynamic } from "./ha/discovery.js";
+import { createLogger } from "./logger.js";
 import {
   publishConsumptionSensors,
   publishEnergySensorDiscovery,
@@ -11,9 +12,13 @@ import {
 } from "./ha/energySensors.js";
 
 export class EnvoyMqttService {
-  constructor({ config, api }) {
+  constructor({ config, api, log } = {}) {
     this.config = config;
     this.api = api;
+
+    this.log =
+      log ??
+      createLogger({ level: process.env.LOG_LEVEL ?? this.config?.logLevel, component: "service" });
 
     this.mqttClient = undefined;
     this.running = false;
@@ -101,7 +106,7 @@ export class EnvoyMqttService {
     this.running = true;
 
     const url = `mqtt://${this.config.mqttHost}:${this.config.mqttPort}`;
-    console.log(`[mqtt] connexion à ${url} ...`);
+    this.log.info(`connexion MQTT à ${url} ...`);
     const client = mqtt.connect(url, {
       username: this.config.mqttUsername,
       password: this.config.mqttPassword,
@@ -110,11 +115,11 @@ export class EnvoyMqttService {
     });
     this.mqttClient = client;
 
-    client.on("connect", () => console.log("[mqtt] connecté"));
-    client.on("reconnect", () => console.log("[mqtt] reconnect..."));
-    client.on("offline", () => console.log("[mqtt] offline"));
-    client.on("close", () => console.log("[mqtt] close"));
-    client.on("error", (err) => console.error("[mqtt] error:", err?.message ?? err));
+    client.on("connect", () => this.log.info("MQTT connecté"));
+    client.on("reconnect", () => this.log.warn("MQTT reconnect..."));
+    client.on("offline", () => this.log.warn("MQTT offline"));
+    client.on("close", () => this.log.warn("MQTT close"));
+    client.on("error", (err) => this.log.error("MQTT error", { message: err?.message ?? String(err) }));
 
     await this.waitForMqttConnect(client, 60_000);
 
@@ -140,6 +145,7 @@ export class EnvoyMqttService {
           sensorsDef: this.sensorsDef,
           configTopicOverride: this.config.haDiscoveryTopic,
           qos: this.config.haDiscoveryQos,
+          log: this.log.child("ha"),
         });
 
         if (this.config.pvProdSensorEnabled) {
@@ -148,6 +154,7 @@ export class EnvoyMqttService {
             baseTopic: this.config.pvProdTopic,
             name: this.config.pvProdSensorName,
             field: "energy",
+            log: this.log.child("ha"),
           });
         }
 
@@ -157,13 +164,14 @@ export class EnvoyMqttService {
             baseTopic: this.config.consoNetTopic,
             name: this.config.consoNetSensorName,
             field: "energy",
+            log: this.log.child("ha"),
           });
         }
 
         this.haDiscoveryPublished = true;
       }
     } catch (err) {
-      console.error("[envoy] lecture initiale impossible (le service continue):", err?.message ?? err);
+      this.log.warn("lecture initiale Envoy impossible (le service continue)", { message: err?.message ?? String(err) });
     }
 
     const tasks = [];
@@ -214,20 +222,22 @@ export class EnvoyMqttService {
   async publishRawLoop() {
     const intervalMs = Math.max(250, Number(this.config.highFrequencyIntervalMs ?? 1000));
 
+    this.log.debug("raw loop démarrée", { intervalMs });
+
     while (this.running) {
       const start = Date.now();
       try {
-        const rawData = await this.api.getRawData();
+        const rawData = await this.api.getRawData({ debug: false });
         for (const [field, value] of Object.entries(rawData)) {
           const topic = `${this.topicRaw}/${field}`;
           if (field === "prod_eim_wNow" && Number(value) < 5) {
-            await this.publish(topic, "0", { retain: false });
+            await this.publish(topic, "0", { retain: false, debug: false });
           } else {
-            await this.publish(topic, String(value), { retain: false });
+            await this.publish(topic, String(value), { retain: false, debug: false });
           }
         }
       } catch (err) {
-        console.error("[envoy] erreur raw:", err?.message ?? err);
+        this.log.warn("erreur lecture raw Envoy", { message: err?.message ?? String(err) });
       }
 
       const elapsed = Date.now() - start;
@@ -237,6 +247,7 @@ export class EnvoyMqttService {
   }
 
   async publishFullLoop() {
+    this.log.debug("full loop démarrée", { intervalMs: this.config.pollingIntervalMs });
     while (this.running) {
       const start = Date.now();
       try {
@@ -257,6 +268,7 @@ export class EnvoyMqttService {
             sensorsDef: this.sensorsDef,
             configTopicOverride: this.config.haDiscoveryTopic,
             qos: this.config.haDiscoveryQos,
+            log: this.log.child("ha"),
           });
 
           if (this.config.pvProdSensorEnabled) {
@@ -265,6 +277,7 @@ export class EnvoyMqttService {
               baseTopic: this.config.pvProdTopic,
               name: this.config.pvProdSensorName,
               field: "energy",
+              log: this.log.child("ha"),
             });
           }
 
@@ -274,6 +287,7 @@ export class EnvoyMqttService {
               baseTopic: this.config.consoNetTopic,
               name: this.config.consoNetSensorName,
               field: "energy",
+              log: this.log.child("ha"),
             });
           }
 
@@ -293,14 +307,14 @@ export class EnvoyMqttService {
         }
 
         if (this.config.pvProdSensorEnabled) {
-          await publishPvProductionSensors({ mqtt: this.mustClient(), topic: this.config.pvProdTopic, data: fullData });
+          await publishPvProductionSensors({ mqtt: this.mustClient(), topic: this.config.pvProdTopic, data: fullData, log: this.log.child("ha") });
         }
 
         if (this.config.consoNetSensorEnabled) {
-          await publishConsumptionSensors({ mqtt: this.mustClient(), topic: this.config.consoNetTopic, data: fullData });
+          await publishConsumptionSensors({ mqtt: this.mustClient(), topic: this.config.consoNetTopic, data: fullData, log: this.log.child("ha") });
         }
       } catch (err) {
-        console.error("[envoy] erreur full:", err?.message ?? err);
+        this.log.warn("erreur lecture full Envoy", { message: err?.message ?? String(err) });
       }
 
       const elapsed = Date.now() - start;
@@ -367,6 +381,7 @@ export class EnvoyMqttService {
         sensorsDef: this.sensorsDef,
         configTopicOverride: this.config.haDiscoveryTopic,
         qos: this.config.haDiscoveryQos,
+        log: this.log.child("ha"),
       });
 
       if (this.config.pvProdSensorEnabled) {
@@ -375,6 +390,7 @@ export class EnvoyMqttService {
           baseTopic: this.config.pvProdTopic,
           name: this.config.pvProdSensorName,
           field: "energy",
+          log: this.log.child("ha"),
         });
       }
 
@@ -384,6 +400,7 @@ export class EnvoyMqttService {
           baseTopic: this.config.consoNetTopic,
           name: this.config.consoNetSensorName,
           field: "energy",
+          log: this.log.child("ha"),
         });
       }
     }
@@ -412,6 +429,13 @@ export class EnvoyMqttService {
 
   async publish(topic, payload, opts) {
     const client = this.mustClient();
+    if (opts?.debug !== false) {
+      this.log.debug("mqtt publish", {
+        topic,
+        retain: Boolean(opts?.retain),
+        bytes: Buffer.byteLength(String(payload ?? "")),
+      });
+    }
     await new Promise((resolve, reject) => {
       client.publish(topic, payload, { retain: opts.retain }, (err) => {
         if (err) reject(err);

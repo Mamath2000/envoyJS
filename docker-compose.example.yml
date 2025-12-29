@@ -15,6 +15,9 @@ services:
     # (la logique utilise surtout `timezone.name` dans le YAML)
     environment:
       - TZ=Europe/Paris
+      # Le niveau de log est pris ici en priorité sur config.yaml
+      # Valeurs: silent|error|warn|info|debug
+      - LOG_LEVEL=info
 
     # Notes réseau:
     # - Si ton `envoy.base_url` pointe vers `http://envoy.local`, ça dépend du DNS/mDNS.

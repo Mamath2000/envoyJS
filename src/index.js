@@ -1,9 +1,12 @@
 import { loadConfig } from "./config.js";
 import { EnvoyApi } from "./envoyApi.js";
 import { EnvoyMqttService } from "./mqttService.js";
+import { createLogger } from "./logger.js";
 
 async function main() {
   const config = loadConfig();
+
+  const log = createLogger({ level: process.env.LOG_LEVEL ?? config.logLevel, component: "main" });
 
   const api = new EnvoyApi({
     username: config.username,
@@ -12,12 +15,13 @@ async function main() {
     envoyHost: config.localEnvoyUrl,
     insecureTls: config.envoyInsecureTls,
     timeoutMs: config.httpTimeoutMs,
+    log: log.child("envoyApi"),
   });
 
-  const service = new EnvoyMqttService({ config, api });
+  const service = new EnvoyMqttService({ config, api, log: log.child("service") });
 
   const shutdown = async (signal) => {
-    console.log(`Signal ${signal} reçu, arrêt...`);
+    log.info(`Signal ${signal} reçu, arrêt...`);
     await service.stop();
     process.exit(0);
   };
@@ -29,6 +33,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Erreur fatale:", err);
+  const log = createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "main" });
+  log.error("Erreur fatale", { message: err?.message ?? String(err), stack: err?.stack });
   process.exit(1);
 });

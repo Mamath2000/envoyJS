@@ -1,5 +1,6 @@
 import { Agent, fetch } from "undici";
 import { isoNowSeconds } from "./utils.js";
+import { createLogger } from "./logger.js";
 
 const ENLIGHTEN_LOGIN_URL = "https://enlighten.enphaseenergy.com/login/login.json";
 const ENTREZ_TOKEN_URL = "https://entrez.enphaseenergy.com/tokens";
@@ -11,6 +12,8 @@ export class EnvoyApi {
     this.password = options.password;
     this.serialNumber = options.serialNumber;
     this.envoyHost = options.envoyHost.replace(/\/$/, "");
+
+    this.log = options?.log ?? createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "envoyApi" });
 
     // timeout pour l'Envoy local (réseau LAN)
     this.timeoutMs = typeof options.timeoutMs === "number" ? options.timeoutMs : 1500;
@@ -37,15 +40,21 @@ export class EnvoyApi {
     return true;
   }
 
-  async authenticate() {
-    await this.loginToEnlighten();
-    await this.getAuthToken();
-    const ok = await this.validateToken();
+  async authenticate({ debug } = {}) {
+    const start = Date.now();
+    if (debug !== false) this.log.debug("auth: start", { serial: this.serialNumber });
+    await this.loginToEnlighten({ debug });
+    await this.getAuthToken({ debug });
+    const ok = await this.validateToken({ debug });
     if (!ok) throw new Error("Token récupéré mais validation échouée");
     this.tokenExpiresAt = Date.now() + 12 * 60 * 60 * 1000;
+
+    if (debug !== false) this.log.debug("auth: success", { durationMs: Date.now() - start });
   }
 
-  async loginToEnlighten() {
+  async loginToEnlighten({ debug } = {}) {
+    const start = Date.now();
+    if (debug !== false) this.log.debug("http: POST login Enlighten", { url: ENLIGHTEN_LOGIN_URL, user: this.username });
     const payload = {
       user: {
         email: this.username,
@@ -70,6 +79,7 @@ export class EnvoyApi {
 
     if (!res.ok) {
       const text = await res.text();
+      if (debug !== false) this.log.debug("http: login Enlighten failed", { status: res.status, durationMs: Date.now() - start });
       throw new Error(`HTTP ${res.status} login Enlighten: ${text}`);
     }
 
@@ -81,10 +91,15 @@ export class EnvoyApi {
     const sessionId = json?.session_id;
     if (!sessionId) throw new Error("Pas de session_id dans la réponse");
     this.sessionId = String(sessionId);
+
+    if (debug !== false) this.log.debug("http: login Enlighten ok", { durationMs: Date.now() - start });
   }
 
-  async getAuthToken() {
+  async getAuthToken({ debug } = {}) {
     if (!this.sessionId) throw new Error("Session ID requis pour récupérer le token");
+
+    const start = Date.now();
+    if (debug !== false) this.log.debug("http: POST token Entrez", { url: ENTREZ_TOKEN_URL, serial: this.serialNumber });
 
     const payload = {
       session_id: this.sessionId,
@@ -109,17 +124,23 @@ export class EnvoyApi {
 
     if (!res.ok) {
       const text = await res.text();
+      if (debug !== false) this.log.debug("http: token Entrez failed", { status: res.status, durationMs: Date.now() - start });
       throw new Error(`HTTP ${res.status} récupération token: ${text}`);
     }
 
     const tokenText = (await res.text()).trim();
     if (!tokenText || tokenText.length <= 20) throw new Error("Token vide");
     this.authToken = tokenText;
+
+    if (debug !== false) this.log.debug("http: token Entrez ok", { durationMs: Date.now() - start, tokenLen: tokenText.length });
   }
 
-  async validateToken() {
+  async validateToken({ debug } = {}) {
     if (!this.authToken) return false;
     const url = `${this.envoyHost}${ENVOY_AUTH_CHECK_ENDPOINT}`;
+
+    const start = Date.now();
+    if (debug !== false) this.log.debug("http: GET validate token", { url: `${this.envoyHost}${ENVOY_AUTH_CHECK_ENDPOINT}` });
 
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), this.timeoutMs);
@@ -135,14 +156,21 @@ export class EnvoyApi {
     });
     clearTimeout(t);
 
-    if (!res.ok) return false;
+    if (!res.ok) {
+      if (debug !== false) this.log.debug("http: validate token failed", { status: res.status, durationMs: Date.now() - start });
+      return false;
+    }
     const text = await res.text();
-    return text.includes("Valid token.");
+    const ok = text.includes("Valid token.");
+    if (debug !== false) this.log.debug("http: validate token ok", { durationMs: Date.now() - start, ok });
+    return ok;
   }
 
-  async makeRequest(endpoint) {
+  async makeRequest(endpoint, { debug } = {}) {
+    const startedAt = Date.now();
+    if (debug !== false) this.log.debug("http: GET", { endpoint });
     if (!this.isTokenValid) {
-      await this.authenticate();
+      await this.authenticate({ debug });
     }
 
     const url = `${this.envoyHost}${endpoint}`;
@@ -162,8 +190,11 @@ export class EnvoyApi {
     });
     clearTimeout(t);
 
+    if (debug !== false) this.log.debug("http: response", { endpoint, status: res.status, durationMs: Date.now() - startedAt });
+
     if (res.status === 401) {
-      await this.authenticate();
+      if (debug !== false) this.log.debug("http: 401 -> re-auth + retry", { endpoint });
+      await this.authenticate({ debug });
       const ac2 = new AbortController();
       const t2 = setTimeout(() => ac2.abort(), this.timeoutMs);
       const retryRes = await fetch(url, {
@@ -173,6 +204,7 @@ export class EnvoyApi {
         signal: ac2.signal,
       });
       clearTimeout(t2);
+      if (debug !== false) this.log.debug("http: retry response", { endpoint, status: retryRes.status, durationMs: Date.now() - startedAt });
       if (!retryRes.ok) {
         const text = await retryRes.text();
         throw new Error(`HTTP ${retryRes.status} après retry: ${text}`);
@@ -198,10 +230,10 @@ export class EnvoyApi {
     return await res.json();
   }
 
-  async getMetersInfo() {
+  async getMetersInfo({ debug } = {}) {
     if (this.eidMappingCache) return this.eidMappingCache;
 
-    const metersInfo = await this.makeRequest("/ivp/meters");
+    const metersInfo = await this.makeRequest("/ivp/meters", { debug });
     const eidMapping = {};
 
     if (Array.isArray(metersInfo)) {
@@ -219,9 +251,9 @@ export class EnvoyApi {
     return eidMapping;
   }
 
-  async getMetersReadings() {
-    const metersInfo = await this.getMetersInfo();
-    const metersReadings = await this.makeRequest("/ivp/meters/readings");
+  async getMetersReadings({ debug } = {}) {
+    const metersInfo = await this.getMetersInfo({ debug });
+    const metersReadings = await this.makeRequest("/ivp/meters/readings", { debug });
     if (!metersInfo || Object.keys(metersInfo).length === 0) return {};
 
     const processed = {};
@@ -239,8 +271,8 @@ export class EnvoyApi {
     return processed;
   }
 
-  async getConsumptionReports() {
-    const consumptionReports = await this.makeRequest("/ivp/meters/reports/consumption");
+  async getConsumptionReports({ debug } = {}) {
+    const consumptionReports = await this.makeRequest("/ivp/meters/reports/consumption", { debug });
 
     const reports = {};
     if (Array.isArray(consumptionReports)) {
@@ -256,14 +288,14 @@ export class EnvoyApi {
     return reports;
   }
 
-  async getProductionV1() {
-    const data = await this.makeRequest("/api/v1/production");
+  async getProductionV1({ debug } = {}) {
+    const data = await this.makeRequest("/api/v1/production", { debug });
     return data && typeof data === "object" && !Array.isArray(data) ? data : {};
   }
 
-  async getRawData() {
-    const metersData = await this.getMetersReadings();
-    const consumptionData = await this.getConsumptionReports();
+  async getRawData({ debug } = {}) {
+    const metersData = await this.getMetersReadings({ debug });
+    const consumptionData = await this.getConsumptionReports({ debug });
 
     const productionMeter = metersData["production"] ?? {};
     const netConsumptionMeter = metersData["net-consumption"] ?? {};
@@ -277,10 +309,10 @@ export class EnvoyApi {
     };
   }
 
-  async getAllEnvoyData() {
-    const metersData = await this.getMetersReadings();
-    const consumptionData = await this.getConsumptionReports();
-    const productionV1Data = await this.getProductionV1();
+  async getAllEnvoyData({ debug } = {}) {
+    const metersData = await this.getMetersReadings({ debug });
+    const consumptionData = await this.getConsumptionReports({ debug });
+    const productionV1Data = await this.getProductionV1({ debug });
 
     const productionMeter = metersData["production"] ?? {};
     const netConsumptionMeter = metersData["net-consumption"] ?? {};

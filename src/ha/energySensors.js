@@ -1,4 +1,7 @@
-export async function publishEnergySensorDiscovery({ mqtt, baseTopic, name, field }) {
+import { createLogger } from "../logger.js";
+
+export async function publishEnergySensorDiscovery({ mqtt, baseTopic, name, field, log }) {
+  const logger = log ?? createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "ha" });
   const sensorId = name
     .toLowerCase()
     .replace(/\s+/g, "_")
@@ -24,15 +27,20 @@ export async function publishEnergySensorDiscovery({ mqtt, baseTopic, name, fiel
     origin: { name: "envoy2mqtt" },
   };
 
+  logger.info("HA energy discovery: publication", { discoveryTopic, baseTopic, name, field });
+
   await new Promise((resolve, reject) => {
     mqtt.publish(discoveryTopic, JSON.stringify(payload), { retain: true }, (err) => {
       if (err) reject(err);
       else resolve();
     });
   });
+
+  logger.debug("HA energy discovery: publié", { discoveryTopic });
 }
 
-export async function publishPvProductionSensors({ mqtt, topic, data }) {
+export async function publishPvProductionSensors({ mqtt, topic, data, log }) {
+  const logger = log ?? createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "ha" });
   const pvData = {
     energy: data["prod_eim_kwhLifetime"],
     power: data["prod_eim_wNow"] ?? 0,
@@ -40,6 +48,8 @@ export async function publishPvProductionSensors({ mqtt, topic, data }) {
     voltage: data["prod_eim_voltage"],
     current: data["prod_eim_current"],
   };
+
+  logger.debug("publish PV sensors", { topic });
 
   await new Promise((resolve, reject) => {
     mqtt.publish(topic, JSON.stringify(pvData), { retain: true }, (err) => {
@@ -49,7 +59,8 @@ export async function publishPvProductionSensors({ mqtt, topic, data }) {
   });
 }
 
-export async function publishConsumptionSensors({ mqtt, topic, data }) {
+export async function publishConsumptionSensors({ mqtt, topic, data, log }) {
+  const logger = log ?? createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "ha" });
   const wNow = Number(data["conso_net_eim_wNow"] ?? 0);
 
   const payload = {
@@ -61,6 +72,8 @@ export async function publishConsumptionSensors({ mqtt, topic, data }) {
     voltage: data["conso_net_eim_voltage"],
     current: data["conso_net_eim_current"],
   };
+
+  logger.debug("publish consumption sensors", { topic });
 
   await new Promise((resolve, reject) => {
     mqtt.publish(topic, JSON.stringify(payload), { retain: true }, (err) => {

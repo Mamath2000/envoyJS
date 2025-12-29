@@ -1,4 +1,5 @@
 import { sanitizeHaId } from "../utils.js";
+import { createLogger } from "../logger.js";
 
 const HA_DISCOVERY_PREFIX = "homeassistant";
 
@@ -18,7 +19,9 @@ export async function publishHaAutodiscoveryDynamic({
   sensorsDef,
   configTopicOverride,
   qos,
+  log,
 }) {
+  const logger = log ?? createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "ha" });
   const serial = device?.identifiers?.[0];
   if (!serial) {
     throw new Error("device.identifiers[0] manquant: impossible de publier l'autodiscovery");
@@ -77,6 +80,14 @@ export async function publishHaAutodiscoveryDynamic({
 
   if (publishedFields === 0) return;
 
+  logger.info("HA autodiscovery: publication", {
+    deviceId,
+    serial,
+    configTopic,
+    entities: publishedFields,
+    qos: typeof qos === "number" ? qos : undefined,
+  });
+
   const payload = {
     device,
     origin: { name: "envoy2mqtt" },
@@ -89,4 +100,6 @@ export async function publishHaAutodiscoveryDynamic({
       else resolve();
     });
   });
+
+  logger.debug("HA autodiscovery: publié", { deviceId, configTopic, entities: publishedFields });
 }
