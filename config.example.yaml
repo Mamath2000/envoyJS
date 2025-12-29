@@ -1,0 +1,53 @@
+# Example configuration for Envoy REST → MQTT service
+# Copy to config/config.yaml and adjust.
+
+envoy:
+  serial: "123456789"
+  base_url: "http://envoy.local"
+
+http:
+  timeout_ms: 1500
+
+auth:
+  owner_email: ""
+  owner_password: ""
+
+polling:
+  interval_ms: 60000          # Normal polling interval (default 60s)
+
+high_frequency:
+  enabled: true
+  interval_ms: 1000
+
+mqtt:
+  host: "mqtt.local"
+  port: 1883
+  username: "user"
+  password: "pass"
+  base_topic: "envoy"
+
+sensors:
+  pv_production:
+    enabled: true
+    topic: "envoy/pv_production_energy"
+    name: "PV Production Energy"
+  conso_net:
+    enabled: true
+    topic: "envoy/conso_net_energy"
+    name: "Conso Nette Energy"
+
+discovery:
+  aggregated: true
+  topic: "homeassistant/device/envoy/${envoy.serial}/config"
+  qos_config: 1
+
+performance:
+  target_p95_publish_ms: 200
+  target_p95_end_to_end_ms: 500
+
+logging:
+  level: info
+
+timezone:
+  name: "Europe/Paris"          # Utilisé pour le snapshot minuit
+

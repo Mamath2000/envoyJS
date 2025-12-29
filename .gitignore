@@ -1,0 +1,62 @@
+# Node / npm
+node_modules/
+.npm/
+.npmrc
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Logs
+logs/
+*.log
+
+# Runtime pid files
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage / tests
+coverage/
+.nyc_output/
+*.lcov
+
+# Build outputs (au cas où)
+dist/
+build/
+.out/
+
+# Caches
+.cache/
+.eslintcache
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Project-specific: config réel (contient des secrets)
+config.yaml
+config.yml
+
+# Docker artefacts
+*.tar
+*.tar.gz
+
+# Local overrides
+*.local
+
+# VS Code (on garde la config de debug dans le repo)
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Git
+*.orig
