@@ -18,7 +18,7 @@ services:
       - TZ=Europe/Paris
       # Le niveau de log est pris ici en priorité sur config.yaml
       # Valeurs: silent|error|warn|info|debug
-      - LOG_LEVEL=debug
+      - LOG_LEVEL=info
 
 
     # Notes réseau:
