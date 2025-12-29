@@ -14,7 +14,13 @@ function findConfigFile() {
     path.join(process.cwd(), "config.yml"),
   ];
   for (const filePath of candidates) {
-    if (fs.existsSync(filePath)) return filePath;
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      const st = fs.statSync(filePath);
+      if (st.isFile()) return filePath;
+    } catch {
+      // ignore
+    }
   }
   return null;
 }

@@ -20,7 +20,4 @@ COPY src ./src
 COPY config.example.yaml ./config.example.yaml
 COPY package.json ./package.json
 
-# config.yaml est fourni via volume/mount
-VOLUME ["/app/config.yaml"]
-
 CMD ["node", "src/index.js"]
