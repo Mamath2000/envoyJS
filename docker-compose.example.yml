@@ -1,0 +1,39 @@
+services:
+  envoyjs:
+    # Utilise le Dockerfile du repo
+    build:
+      context: .
+    image: envoyjs:local
+    container_name: envoyjs
+    restart: unless-stopped
+
+    # Le process cherche ./config.yaml dans le WORKDIR (/app)
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+    # Optionnel: si tu veux forcer un fuseau côté conteneur
+    # (la logique utilise surtout `timezone.name` dans le YAML)
+    environment:
+      - TZ=Europe/Paris
+
+    # Notes réseau:
+    # - Si ton `envoy.base_url` pointe vers `http://envoy.local`, ça dépend du DNS/mDNS.
+    #   Dans Docker, le .local (mDNS) ne marche pas toujours. Le plus simple est
+    #   de mettre l'IP de l'Envoy dans `envoy.base_url` (ex: http://192.168.1.50).
+    # - Si besoin, tu peux aussi ajouter une entrée statique:
+    # extra_hosts:
+    #   - "envoy.local:192.168.1.50"
+
+    # Pas d'exposition de ports: le service publie vers MQTT (sortant).
+
+
+# --- Variante optionnelle: broker MQTT local ---
+# Si tu n'as pas déjà un broker, dé-commente ceci + adapte `mqtt.host` à `mqtt` dans config.yaml
+#
+#  mqtt:
+#    image: eclipse-mosquitto:2
+#    container_name: mqtt
+#    restart: unless-stopped
+#    ports:
+#      - "1883:1883"
+#    # Pour persister la conf/données, ajoute des volumes selon tes besoins.

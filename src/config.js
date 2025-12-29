@@ -67,6 +67,10 @@ export function loadConfig() {
   }
   const cfg = fileCfg;
 
+  const haDiscoveryEnabled = Boolean(
+    cfg?.discovery?.enabled ?? cfg?.discovery?.aggregated ?? false,
+  );
+
   const serial = String(cfg?.envoy?.serial ?? "").trim();
   const baseUrl = String(cfg?.envoy?.base_url ?? "").trim().replace(/\/$/, "");
   const username = String(cfg?.auth?.owner_email ?? "").trim();
@@ -100,7 +104,7 @@ export function loadConfig() {
     highFrequencyEnabled: Boolean(cfg?.high_frequency?.enabled ?? false),
     highFrequencyIntervalMs: Number(cfg?.high_frequency?.interval_ms ?? 1000),
 
-    haAutodiscovery: Boolean(cfg?.discovery?.aggregated ?? false),
+    haAutodiscovery: haDiscoveryEnabled,
     haDiscoveryTopic: String(cfg?.discovery?.topic ?? "").trim() || undefined,
     haDiscoveryQos: Number(cfg?.discovery?.qos_config ?? 1),
 

@@ -37,13 +37,7 @@ sensors:
     name: "Conso Nette Energy"
 
 discovery:
-  aggregated: true
-  topic: "homeassistant/device/envoy/${envoy.serial}/config"
-  qos_config: 1
-
-performance:
-  target_p95_publish_ms: 200
-  target_p95_end_to_end_ms: 500
+  enabled: true
 
 logging:
   level: info
