@@ -1,5 +1,5 @@
 # Example configuration for Envoy REST → MQTT service
-# Copy to config/config.yaml and adjust.
+# Copy to ./config.yaml (ou ./config/config.yaml) et ajuste.
 
 envoy:
   serial: "123456789"
