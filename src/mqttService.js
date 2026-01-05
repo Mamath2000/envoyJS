@@ -88,6 +88,9 @@ export class EnvoyMqttService {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
+      // Important: certains environnements retournent "24" à minuit.
+      // En forçant h23, on obtient 00..23. (Et on garde un fallback plus bas.)
+      hourCycle: "h23",
       hour12: false,
     });
     const parts = dtf.formatToParts(new Date());
@@ -95,10 +98,21 @@ export class EnvoyMqttService {
     const year = get("year");
     const month = get("month");
     const day = get("day");
-    const hour = Number(get("hour") || 0);
+    let hour = Number(get("hour") || 0);
     const minute = Number(get("minute") || 0);
     const second = Number(get("second") || 0);
-    const date = year && month && day ? `${year}-${month}-${day}` : new Date().toISOString().slice(0, 10);
+
+    let date = year && month && day ? `${year}-${month}-${day}` : new Date().toISOString().slice(0, 10);
+
+    // Fallback robuste: si l'heure arrive à 24 (observé sur certains runtimes à minuit),
+    // on la ramène à 0 et on avance la date d'un jour.
+    if (hour === 24 && year && month && day) {
+      hour = 0;
+      const base = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+      const next = new Date(base.getTime() + 24 * 60 * 60 * 1000);
+      date = next.toISOString().slice(0, 10);
+    }
+
     return { date, hour, minute, second };
   }
 
