@@ -10,7 +10,7 @@ export async function publishEnergySensorDiscovery({ mqtt, baseTopic, name, fiel
   const discoveryTopic = `homeassistant/sensor/${sensorId}/${field}/config`;
   const payload = {
     unique_id: `${sensorId}_${field}`,
-    object_id: `${sensorId}_${field}`,
+    default_entity_id: `sensor.${sensorId}_${field}`,
     device: {
       identifiers: [sensorId],
       model: "Envoy Meter S",

@@ -44,9 +44,9 @@ export async function publishHaAutodiscoveryDynamic({
     const platform = def.platform ?? "sensor";
     const componentId = sanitizeHaId(field);
 
-    let objectId;
+    let default_entity_id;
     if (def.name && def.name.trim()) {
-      objectId = "envoy_" + def.name
+      default_entity_id = `${platform}.envoy_${def.name}`
         .replace(/\s+/g, "_")
         .replace(/[()]/g, "")
         .toLowerCase();
@@ -63,7 +63,7 @@ export async function publishHaAutodiscoveryDynamic({
       expire_after: def.expire_after ?? 120,
       value_template: valueTemplateFor(def),
       unique_id: `envoy_${serial}_${field}`,
-      object_id: objectId,
+      default_entity_id: default_entity_id,
       force_update: true,
       has_entity_name: true,
       payload_on: def.payload_on,
