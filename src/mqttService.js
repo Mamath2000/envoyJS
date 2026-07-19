@@ -323,10 +323,10 @@ export class EnvoyMqttService {
         topic: this.tableauElec.topic,
         powerField: this.tableauElec.powerField,
         indexField: this.tableauElec.indexField,
-          indexUnit: this.tableauElec.indexUnit,
+        indexUnit: this.tableauElec.indexUnit,
         sign: this.tableauElec.sign,
-          stateFilePath: this.tableauElec.stateFilePath,
-          persistence: "fichier + mémoire process",
+        stateFilePath: this.tableauElec.stateFilePath,
+        persistence: "fichier + mémoire process",
       });
     }
 
@@ -729,6 +729,30 @@ export class EnvoyMqttService {
     const baseAllKwhLifetime = Number(adjusted.conso_all_eim_kwhLifetime);
     if (Number.isFinite(baseAllKwhLifetime)) {
       adjusted.conso_all_eim_kwhLifetime = Math.max(0, Number((baseAllKwhLifetime + energyOffsetWh / 1000).toFixed(3)));
+    }
+
+    // to_grid (export) diminue quand la conso externe augmente, et inversement.
+    const baseGridWhLifetime = Number(adjusted.grid_eim_whLifetime);
+    if (Number.isFinite(baseGridWhLifetime)) {
+      adjusted.grid_eim_whLifetime = Math.max(0, Math.round(baseGridWhLifetime - energyOffsetWh));
+    }
+
+    const baseGridKwhLifetime = Number(adjusted.grid_eim_kwhLifetime);
+    if (Number.isFinite(baseGridKwhLifetime)) {
+      adjusted.grid_eim_kwhLifetime = Math.max(0, Number((baseGridKwhLifetime - energyOffsetWh / 1000).toFixed(3)));
+    }
+
+    // economie = production - to_grid
+    const prodWhLifetime = Number(adjusted.prod_eim_whLifetime);
+    const gridWhLifetime = Number(adjusted.grid_eim_whLifetime);
+    if (Number.isFinite(prodWhLifetime) && Number.isFinite(gridWhLifetime)) {
+      adjusted.eco_eim_whLifetime = Math.max(0, Math.round(prodWhLifetime - gridWhLifetime));
+    }
+
+    const prodKwhLifetime = Number(adjusted.prod_eim_kwhLifetime);
+    const gridKwhLifetime = Number(adjusted.grid_eim_kwhLifetime);
+    if (Number.isFinite(prodKwhLifetime) && Number.isFinite(gridKwhLifetime)) {
+      adjusted.eco_eim_kwhLifetime = Math.max(0, Number((prodKwhLifetime - gridKwhLifetime).toFixed(3)));
     }
 
     adjusted.tableau_elec_wNow = Math.round(signedPowerW);
