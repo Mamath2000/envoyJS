@@ -321,17 +321,6 @@ export class EnvoyApi {
     Object.assign(processed, this.processMetersProductionData(productionMeter));
     Object.assign(processed, this.processMetersNetConsumptionData(netConsumptionMeter));
 
-    const netDemand = Number(netConsumptionMeter?.instantaneousDemand ?? 0);
-    const prodDemand = Number(productionMeter?.instantaneousDemand ?? 0);
-
-    processed.grid_eim_wNow = netDemand < 0 ? Math.abs(netDemand) : 0;
-    processed.grid_eim_wNow_binary = netDemand > 0 ? 1 : 0;
-    processed.eco_eim_wNow = netDemand < 0 ? prodDemand + netDemand : prodDemand;
-
-    processed.eco_eim_whLifetime = Number(
-      (Number(processed.prod_eim_whLifetime ?? 0) - Number(processed.grid_eim_whLifetime ?? 0)).toFixed(3),
-    );
-
     const totalConsumption = consumptionData["total-consumption"] ?? {};
     const netConsumptionReports = consumptionData["net-consumption"] ?? {};
 

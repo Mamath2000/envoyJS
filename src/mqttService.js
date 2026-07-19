@@ -10,14 +10,14 @@ import {
   publishEnergySensorDiscovery,
   publishPvProductionSensors,
 } from "./ha/energySensors.js";
-
-const tableauElecRuntimeState = {
-  currentPowerW: 0,
-  energyFromIndexWh: 0,
-  lastIndexWh: undefined,
-};
+import { deriveEnvoyFields } from "./envoyDerivedFields.js";
 
 export class EnvoyMqttService {
+  // Nombre de lectures consecutives, coherentes entre elles, exigees en dessous
+  // de la derniere valeur confirmee avant de committer un reset/remplacement de
+  // capteur tableau elec (protege contre un payload glitché isolé, ex: null/0).
+  static RESET_CONFIRMATIONS_REQUIRED = 3;
+
   constructor({ config, api, log } = {}) {
     this.config = config;
     this.api = api;
@@ -55,7 +55,14 @@ export class EnvoyMqttService {
       indexUnit: this.config.tableauElecIndexUnit,
       stateFilePath: this.resolveTableauElecStateFilePath(this.config.tableauElecStateFile),
       sign: Number.isFinite(Number(this.config.tableauElecSign)) ? Number(this.config.tableauElecSign) : 1,
-      state: tableauElecRuntimeState,
+      state: {
+        currentPowerW: 0,
+        energyFromIndexWh: 0,
+        lastIndexWh: undefined,
+        pendingResetIndexWh: undefined,
+        pendingResetLastSeenWh: undefined,
+        pendingResetCount: 0,
+      },
     };
 
     this.haDevice = {
@@ -153,6 +160,9 @@ export class EnvoyMqttService {
 
       const lastIndexWh = Number(persisted?.lastIndexWh);
       const energyFromIndexWh = Number(persisted?.energyFromIndexWh);
+      const pendingResetIndexWh = Number(persisted?.pendingResetIndexWh);
+      const pendingResetLastSeenWh = Number(persisted?.pendingResetLastSeenWh);
+      const pendingResetCount = Number(persisted?.pendingResetCount);
 
       if (Number.isFinite(lastIndexWh)) {
         this.tableauElec.state.lastIndexWh = lastIndexWh;
@@ -162,10 +172,23 @@ export class EnvoyMqttService {
         this.tableauElec.state.energyFromIndexWh = energyFromIndexWh;
       }
 
+      if (Number.isFinite(pendingResetIndexWh)) {
+        this.tableauElec.state.pendingResetIndexWh = pendingResetIndexWh;
+      }
+
+      if (Number.isFinite(pendingResetLastSeenWh)) {
+        this.tableauElec.state.pendingResetLastSeenWh = pendingResetLastSeenWh;
+      }
+
+      if (Number.isFinite(pendingResetCount)) {
+        this.tableauElec.state.pendingResetCount = pendingResetCount;
+      }
+
       this.log.info("etat tableau elec restauré depuis disque", {
         stateFilePath,
         hasLastIndex: Number.isFinite(this.tableauElec.state.lastIndexWh),
         energyFromIndexWh: Math.round(this.tableauElec.state.energyFromIndexWh || 0),
+        pendingResetConfirmations: this.tableauElec.state.pendingResetCount || 0,
       });
     } catch (err) {
       this.log.warn("impossible de lire l'etat tableau elec", {
@@ -186,13 +209,22 @@ export class EnvoyMqttService {
       fs.mkdirSync(stateDir, { recursive: true });
 
       const payload = {
-        version: 1,
+        version: 2,
         updatedAt: new Date().toISOString(),
         lastIndexWh: Number.isFinite(this.tableauElec.state.lastIndexWh)
           ? this.tableauElec.state.lastIndexWh
           : null,
         energyFromIndexWh: Number.isFinite(this.tableauElec.state.energyFromIndexWh)
           ? this.tableauElec.state.energyFromIndexWh
+          : 0,
+        pendingResetIndexWh: Number.isFinite(this.tableauElec.state.pendingResetIndexWh)
+          ? this.tableauElec.state.pendingResetIndexWh
+          : null,
+        pendingResetLastSeenWh: Number.isFinite(this.tableauElec.state.pendingResetLastSeenWh)
+          ? this.tableauElec.state.pendingResetLastSeenWh
+          : null,
+        pendingResetCount: Number.isFinite(this.tableauElec.state.pendingResetCount)
+          ? this.tableauElec.state.pendingResetCount
           : 0,
       };
 
@@ -240,8 +272,7 @@ export class EnvoyMqttService {
     await sleep(10_000);
 
     try {
-      const envoyData = await this.api.getAllEnvoyData();
-      const currentData = this.applyTableauElecOnConsoNet(envoyData);
+      const currentData = await this.getCorrectedFullData();
       await this.initializeMissingReferences(currentData);
 
       if (this.config.haAutodiscovery) {
@@ -412,8 +443,7 @@ export class EnvoyMqttService {
     while (this.running) {
       const start = Date.now();
       try {
-        const envoyData = await this.api.getAllEnvoyData();
-        const fullData = this.applyTableauElecOnConsoNet(envoyData);
+        const fullData = await this.getCorrectedFullData();
         await this.initializeMissingReferences(fullData);
         await this.checkAndUpdateMidnightReferences(fullData);
 
@@ -645,6 +675,13 @@ export class EnvoyMqttService {
     return { powerW, indexWh };
   }
 
+  clearPendingTableauElecReset() {
+    const state = this.tableauElec.state;
+    state.pendingResetIndexWh = undefined;
+    state.pendingResetLastSeenWh = undefined;
+    state.pendingResetCount = 0;
+  }
+
   updateTableauElecIndexOffset(indexWh) {
     const state = this.tableauElec.state;
 
@@ -660,105 +697,109 @@ export class EnvoyMqttService {
     }
 
     const deltaWh = indexWh - state.lastIndexWh;
-    if (deltaWh < -1) {
-      this.log.warn("index tableau elec en baisse: reset/rollover detecté, delta ignoré", {
-        previousWh: Math.round(state.lastIndexWh),
-        currentWh: Math.round(indexWh),
-      });
+
+    if (deltaWh >= -1) {
+      // Progression normale depuis la derniere valeur confirmee.
+      if (state.pendingResetCount > 0) {
+        // Un reset etait en cours de confirmation mais le capteur est revenu sur sa
+        // trajectoire d'origine: c'etaient des payloads glitchés (null/0), on les ignore.
+        this.log.debug("baisse d'index tableau elec ignorée: payloads isolés non confirmés", {
+          candidateWh: Math.round(state.pendingResetIndexWh),
+          confirmations: state.pendingResetCount,
+          currentWh: Math.round(indexWh),
+        });
+        this.clearPendingTableauElecReset();
+      }
+
+      const safeDeltaWh = deltaWh < 0 ? 0 : deltaWh;
+      state.energyFromIndexWh += safeDeltaWh * this.tableauElec.sign;
       state.lastIndexWh = indexWh;
       this.saveTableauElecStateToDisk();
       return;
     }
 
-    const safeDeltaWh = deltaWh < 0 ? 0 : deltaWh;
+    // Baisse detectee (deltaWh < -1): ne jamais committer sur une seule lecture, ni deux.
+    // Un payload glitché (null/0) est indiscernable d'un vrai remplacement de capteur;
+    // on exige RESET_CONFIRMATIONS_REQUIRED lectures consecutives et coherentes entre
+    // elles avant de committer le reset.
+    const isFirstCandidate = !(state.pendingResetCount > 0);
+    const deltaFromLastSeenWh = isFirstCandidate ? 0 : indexWh - state.pendingResetLastSeenWh;
+
+    if (!isFirstCandidate && deltaFromLastSeenWh < -1) {
+      // Toujours erratique/en baisse par rapport au candidat precedent: on redemarre
+      // la fenetre de confirmation a partir de cette nouvelle valeur.
+      state.pendingResetIndexWh = indexWh;
+      state.pendingResetLastSeenWh = indexWh;
+      state.pendingResetCount = 1;
+      this.saveTableauElecStateToDisk();
+      this.log.debug("index tableau elec: candidat de reset instable, fenetre redemarrée", {
+        candidateWh: Math.round(indexWh),
+      });
+      return;
+    }
+
+    if (isFirstCandidate) {
+      state.pendingResetIndexWh = indexWh;
+      state.pendingResetLastSeenWh = indexWh;
+      state.pendingResetCount = 1;
+    } else {
+      state.pendingResetLastSeenWh = indexWh;
+      state.pendingResetCount += 1;
+    }
+    this.saveTableauElecStateToDisk();
+
+    if (state.pendingResetCount < EnvoyMqttService.RESET_CONFIRMATIONS_REQUIRED) {
+      this.log.warn("index tableau elec en baisse: en attente de confirmation avant reset", {
+        previousWh: Math.round(state.lastIndexWh),
+        candidateWh: Math.round(indexWh),
+        confirmations: state.pendingResetCount,
+        required: EnvoyMqttService.RESET_CONFIRMATIONS_REQUIRED,
+      });
+      return;
+    }
+
+    // Reset confirmé sur RESET_CONFIRMATIONS_REQUIRED lectures consecutives.
+    // L'offset deja accumulé (ex: capteur precedent) est preservé, seul le delta
+    // depuis le tout premier candidat est ajouté.
+    const previousConfirmedWh = state.lastIndexWh;
+    const totalDeltaSincePendingWh = indexWh - state.pendingResetIndexWh;
+    const safeDeltaWh = totalDeltaSincePendingWh < 0 ? 0 : totalDeltaSincePendingWh;
     state.energyFromIndexWh += safeDeltaWh * this.tableauElec.sign;
     state.lastIndexWh = indexWh;
+    this.clearPendingTableauElecReset();
     this.saveTableauElecStateToDisk();
+    this.log.warn("index tableau elec: reset/remplacement du capteur confirmé", {
+      previousWh: Math.round(previousConfirmedWh),
+      newBaselineWh: Math.round(indexWh),
+    });
   }
 
-  applyTableauElecOnConsoNet(data) {
-    if (!this.tableauElec.enabled || !data || typeof data !== "object") return data;
+  getTableauElecCorrection() {
+    if (!this.tableauElec.enabled) return { signedPowerW: 0, energyOffsetWh: 0 };
 
-    const adjusted = { ...data };
     const signedPowerW = this.tableauElec.state.currentPowerW * this.tableauElec.sign;
     const energyOffsetWh = this.tableauElec.indexField && Number.isFinite(this.tableauElec.state.lastIndexWh)
       ? this.tableauElec.state.energyFromIndexWh
       : 0;
 
-    const baseNetPowerW = Number(adjusted.conso_net_eim_wNow ?? 0);
-    if (Number.isFinite(baseNetPowerW)) {
-      const correctedNetPowerW = Math.round(baseNetPowerW + signedPowerW);
-      adjusted.conso_net_eim_wNow = correctedNetPowerW;
+    return { signedPowerW, energyOffsetWh };
+  }
 
-      // Les champs de puissance dérivés du net doivent suivre la valeur corrigée.
-      adjusted.grid_eim_wNow = correctedNetPowerW < 0 ? Math.abs(correctedNetPowerW) : 0;
-      adjusted.grid_eim_wNow_binary = correctedNetPowerW > 0 ? 1 : 0;
+  deriveFullData(rawFields) {
+    const correction = this.getTableauElecCorrection();
+    const data = deriveEnvoyFields(rawFields, correction);
 
-      const prodW = Number(adjusted.prod_eim_wNow);
-      if (Number.isFinite(prodW)) {
-        adjusted.eco_eim_wNow = correctedNetPowerW < 0 ? prodW + correctedNetPowerW : prodW;
-      }
-
-      // Cohérence électrique demandée: I = P / U
-      const netVoltageV = Number(adjusted.conso_net_eim_voltage);
-      if (Number.isFinite(netVoltageV) && Math.abs(netVoltageV) > 0.1) {
-        adjusted.conso_net_eim_current = Number((correctedNetPowerW / netVoltageV).toFixed(3));
-      }
+    if (this.tableauElec.enabled && data && typeof data === "object") {
+      data.tableau_elec_wNow = Math.round(correction.signedPowerW);
+      data.tableau_elec_whOffset = Math.round(correction.energyOffsetWh);
     }
 
-    const baseAllPowerW = Number(adjusted.conso_all_eim_wNow);
-    if (Number.isFinite(baseAllPowerW)) {
-      adjusted.conso_all_eim_wNow = Math.round(baseAllPowerW + signedPowerW);
-    }
+    return data;
+  }
 
-    const baseNetWhLifetime = Number(adjusted.conso_net_eim_whLifetime);
-    if (Number.isFinite(baseNetWhLifetime)) {
-      adjusted.conso_net_eim_whLifetime = Math.max(0, Math.round(baseNetWhLifetime + energyOffsetWh));
-    }
-
-    const baseNetKwhLifetime = Number(adjusted.conso_net_eim_kwhLifetime);
-    if (Number.isFinite(baseNetKwhLifetime)) {
-      adjusted.conso_net_eim_kwhLifetime = Math.max(0, Number((baseNetKwhLifetime + energyOffsetWh / 1000).toFixed(3)));
-    }
-
-    const baseAllWhLifetime = Number(adjusted.conso_all_eim_whLifetime);
-    if (Number.isFinite(baseAllWhLifetime)) {
-      adjusted.conso_all_eim_whLifetime = Math.max(0, Math.round(baseAllWhLifetime + energyOffsetWh));
-    }
-
-    const baseAllKwhLifetime = Number(adjusted.conso_all_eim_kwhLifetime);
-    if (Number.isFinite(baseAllKwhLifetime)) {
-      adjusted.conso_all_eim_kwhLifetime = Math.max(0, Number((baseAllKwhLifetime + energyOffsetWh / 1000).toFixed(3)));
-    }
-
-    // to_grid (export) diminue quand la conso externe augmente, et inversement.
-    const baseGridWhLifetime = Number(adjusted.grid_eim_whLifetime);
-    if (Number.isFinite(baseGridWhLifetime)) {
-      adjusted.grid_eim_whLifetime = Math.max(0, Math.round(baseGridWhLifetime - energyOffsetWh));
-    }
-
-    const baseGridKwhLifetime = Number(adjusted.grid_eim_kwhLifetime);
-    if (Number.isFinite(baseGridKwhLifetime)) {
-      adjusted.grid_eim_kwhLifetime = Math.max(0, Number((baseGridKwhLifetime - energyOffsetWh / 1000).toFixed(3)));
-    }
-
-    // economie = production - to_grid
-    const prodWhLifetime = Number(adjusted.prod_eim_whLifetime);
-    const gridWhLifetime = Number(adjusted.grid_eim_whLifetime);
-    if (Number.isFinite(prodWhLifetime) && Number.isFinite(gridWhLifetime)) {
-      adjusted.eco_eim_whLifetime = Math.max(0, Math.round(prodWhLifetime - gridWhLifetime));
-    }
-
-    const prodKwhLifetime = Number(adjusted.prod_eim_kwhLifetime);
-    const gridKwhLifetime = Number(adjusted.grid_eim_kwhLifetime);
-    if (Number.isFinite(prodKwhLifetime) && Number.isFinite(gridKwhLifetime)) {
-      adjusted.eco_eim_kwhLifetime = Math.max(0, Number((prodKwhLifetime - gridKwhLifetime).toFixed(3)));
-    }
-
-    adjusted.tableau_elec_wNow = Math.round(signedPowerW);
-    adjusted.tableau_elec_whOffset = Math.round(energyOffsetWh);
-
-    return adjusted;
+  async getCorrectedFullData({ debug } = {}) {
+    const rawFields = await this.api.getAllEnvoyData({ debug });
+    return this.deriveFullData(rawFields);
   }
 
   calculateDailyValues(currentData) {

@@ -25,14 +25,16 @@ Le service principal lance deux boucles:
 flowchart TD
 	A[Config YAML] --> B[EnvoyApi]
 	B --> C[Endpoints Envoy]
-	C --> D[Normalisation interne]
-	D --> E[Corrections tableau deporte]
+	C --> D[Normalisation interne brute]
+	D --> E[deriveEnvoyFields: calcul champs derives + correction tableau]
 	E --> F[Calcul valeurs journalieres]
 	F --> G[Publish MQTT data]
 	D --> H[Publish MQTT raw]
 	I[Topic tableau externe] --> E
 	J[Fichier state tableau] <--> E
 ```
+
+Depuis la refonte, `EnvoyApi.getAllEnvoyData()` ne fait plus que la normalisation brute (renommage de champs, aucun calcul croise). Tous les champs derives (grid, eco, courant, lifetimes corriges) sont calcules en un seul passage par `deriveEnvoyFields()` (src/envoyDerivedFields.js), que le tableau elec soit actif ou non (avec une correction nulle par defaut).
 
 ## 2. Authentification et securite
 
@@ -87,7 +89,7 @@ Resultat interne:
 
 Reference code:
 
-- src/envoyApi.js:229
+- src/envoyApi.js:233 (getMetersInfo)
 
 ### 3.2 GET /ivp/meters/readings
 
@@ -128,7 +130,7 @@ Resultat interne apres mapping par role:
 
 Reference code:
 
-- src/envoyApi.js:250
+- src/envoyApi.js:254 (getMetersReadings)
 
 ### 3.3 GET /ivp/meters/reports/consumption
 
@@ -167,7 +169,7 @@ Resultat interne:
 
 Reference code:
 
-- src/envoyApi.js:271
+- src/envoyApi.js:274 (getConsumptionReports)
 
 ### 3.4 GET /api/v1/production
 
@@ -183,7 +185,7 @@ Exemple de retour utile:
 
 Reference code:
 
-- src/envoyApi.js:286
+- src/envoyApi.js:291 (getProductionV1)
 
 ## 4. Objets de sortie internes
 
@@ -202,13 +204,13 @@ Objet compact pour la boucle haute frequence:
 
 Reference code:
 
-- src/envoyApi.js:291
+- src/envoyApi.js:296 (getRawData)
 
 ### 4.2 Sortie getAllEnvoyData
 
-Objet complet pour la boucle principale:
+Objet brut normalise pour la boucle principale (renommage de champs uniquement, aucun calcul croise):
 
-- puissances instantanees
+- puissances instantanees telles que renvoyees par l'Envoy
 - tensions/courants/facteur de puissance
 - compteurs lifetime Wh et kWh
 - timestamp et timestamp_text
@@ -218,33 +220,49 @@ Exemples de champs produits:
 - prod_eim_wNow
 - conso_net_eim_wNow
 - conso_all_eim_wNow
-- grid_eim_wNow
-- eco_eim_wNow
 - prod_eim_whLifetime / prod_eim_kwhLifetime
 - conso_net_eim_whLifetime / conso_net_eim_kwhLifetime
 - conso_all_eim_whLifetime / conso_all_eim_kwhLifetime
 
+Note: `grid_eim_wNow`, `grid_eim_wNow_binary`, `eco_eim_wNow`, `eco_eim_whLifetime`, `eco_eim_kwhLifetime` et `conso_net_eim_current` ne font plus partie de cette sortie brute — ils sont calcules par `deriveEnvoyFields()` (voir 4.3), en un seul passage, a partir de cet objet.
+
 Reference code:
 
-- src/envoyApi.js:304
+- src/envoyApi.js:312
+
+### 4.3 Sortie deriveEnvoyFields
+
+Fonction pure (src/envoyDerivedFields.js) qui prend l'objet brut de `getAllEnvoyData()` plus une correction optionnelle `{ signedPowerW, energyOffsetWh }` (nulle par defaut) et renvoie l'objet final publie, en un seul passage de calcul:
+
+- champs bruts recopies tels quels
+- conso_net_eim_wNow / conso_all_eim_wNow decales de `signedPowerW`
+- grid_eim_wNow, grid_eim_wNow_binary, eco_eim_wNow calcules a partir du net corrige
+- conso_net_eim_current recalcule via I = P / U
+- conso_net/all_eim_whLifetime/kwhLifetime decales de `energyOffsetWh`, grid_eim_whLifetime/kwhLifetime decale en sens inverse, eco_eim_whLifetime/kwhLifetime recalcule (tous clampes a 0)
+
+Reference code:
+
+- src/envoyDerivedFields.js:6
 
 ## 5. Logique de calcul metier
 
 ### 5.1 Calculs derives de base
 
-A partir de la puissance nette:
+A partir de la puissance nette corrigee (`correctedNetPowerW`, apres application de la correction tableau elec):
 
-- grid_eim_wNow = abs(netDemand) si netDemand < 0 sinon 0
-- grid_eim_wNow_binary = 1 si netDemand > 0 sinon 0
-- eco_eim_wNow = prodDemand + netDemand si netDemand < 0 sinon prodDemand
+- grid_eim_wNow = abs(correctedNetPowerW) si correctedNetPowerW < 0 sinon 0
+- grid_eim_wNow_binary = 1 si correctedNetPowerW > 0 sinon 0
+- eco_eim_wNow = prodDemand + correctedNetPowerW si correctedNetPowerW < 0 sinon prodDemand
 
 Economie lifetime:
 
-- eco_eim_whLifetime = prod_eim_whLifetime - grid_eim_whLifetime
+- eco_eim_whLifetime = max(0, prod_eim_whLifetime - grid_eim_whLifetime_corrige)
+
+Ce calcul tourne desormais systematiquement dans `deriveEnvoyFields()`, tableau elec actif ou non (correction nulle dans ce dernier cas — voir 6.3).
 
 Reference code:
 
-- src/envoyApi.js:318
+- src/envoyDerivedFields.js:6
 
 ### 5.2 Valeurs journalieres
 
@@ -263,8 +281,9 @@ Et publie:
 
 Reference code:
 
-- src/mqttService.js:397
-- src/mqttService.js:597
+- src/mqttService.js:523 (initializeMissingReferences)
+- src/mqttService.js:536 (checkAndUpdateMidnightReferences)
+- src/mqttService.js:805 (calculateDailyValues)
 
 ## 6. Integration du tableau electrique deporte
 
@@ -300,31 +319,38 @@ Le fichier state_file (par defaut data/tableau-elec-state.json) stocke:
 
 ```json
 {
-	"version": 1,
+	"version": 2,
 	"updatedAt": "2026-07-19T12:34:56.000Z",
 	"lastIndexWh": 1345231,
-	"energyFromIndexWh": 5420
+	"energyFromIndexWh": 5420,
+	"pendingResetIndexWh": null,
+	"pendingResetLastSeenWh": null,
+	"pendingResetCount": 0
 }
 ```
+
+`lastIndexWh`/`energyFromIndexWh` sont la derniere valeur confirmee et l'offset cumule. Les trois champs `pendingReset*` portent l'etat de la fenetre de confirmation d'un eventuel reset/remplacement de capteur (voir 6.3) — ils sont non-nuls uniquement pendant qu'une baisse d'index est en cours de confirmation, et permettent de ne pas perdre cette confirmation partielle en cas de redemarrage du service au mauvais moment.
 
 Mise a jour du fichier:
 
 - a la premiere baseline
 - a chaque delta valide
-- en cas de recul index (reset/rollover)
+- a chaque lecture candidate/confirmee d'un reset (voir 6.3)
 - a l arret du service
 
 Reference code:
 
-- src/mqttService.js:136
-- src/mqttService.js:178
-- src/mqttService.js:648
+- src/mqttService.js:143 (resolveTableauElecStateFilePath)
+- src/mqttService.js:201 (saveTableauElecStateToDisk)
+- src/mqttService.js:685 (updateTableauElecIndexOffset)
 
 ### 6.3 Corrections appliquees dans le code (detail)
 
 Le principe est bien celui que tu decris: le tableau deporte sert a corriger un ecart sur les donnees Envoy.
 
-Le code applique les corrections suivantes.
+Depuis la refonte, la correction n'est plus appliquee "apres coup" sur un objet deja calcule: `EnvoyMqttService.getTableauElecCorrection()` (src/mqttService.js:672) resout `{ signedPowerW, energyOffsetWh }` a partir de l'etat courant du tableau elec (0 si desactive), puis `deriveFullData()` (src/mqttService.js:683) transmet cette correction a `deriveEnvoyFields()` en un seul appel — c'est cette meme fonction qui calcule aussi bien les champs de base (5.1) que la correction, il n'y a plus de double calcul.
+
+Le code applique les corrections suivantes (dans src/envoyDerivedFields.js).
 
 Correction puissance instantanee (avec signe):
 
@@ -341,7 +367,7 @@ Puis recalcul de derivees instantanees:
 
 Correction energie cumulative (Wh) via index differentiel uniquement:
 
-- energyOffsetWh = somme des deltas d index externe (jamais la valeur absolue)
+- energyOffsetWh = somme des deltas d index externe confirmes (jamais la valeur absolue)
 - conso_net_eim_whLifetime = conso_net_eim_whLifetime_envoy + energyOffsetWh
 - conso_net_eim_kwhLifetime = conso_net_eim_kwhLifetime_envoy + energyOffsetWh / 1000
 - conso_all_eim_whLifetime = conso_all_eim_whLifetime_envoy + energyOffsetWh
@@ -356,12 +382,22 @@ Impact sur les calculs journaliers:
 - conso_all_eim_today, conso_net_eim_today, grid_eim_today et eco_eim_today sont corriges,
   car calcules depuis les lifetimes corriges.
 
+#### Detection de reset/remplacement du capteur externe (protection anti-glitch)
+
+Un payload MQTT glitché (`null` ou `0` ponctuel, ex: device Zigbee qui se reveille) est indiscernable, sur une seule lecture, d'un vrai remplacement de capteur (compteur qui repart de 0). `updateTableauElecIndexOffset()` n'applique donc jamais un reset sur une seule baisse d'index detectee (delta < -1 Wh par rapport a la derniere valeur confirmee):
+
+- 1ere lecture basse → candidat de reset, mis en attente (rien n'est committe, `energyFromIndexWh`/`lastIndexWh` inchanges).
+- Si la lecture suivante revient sur la trajectoire d'origine (delta normal par rapport a l'ancienne valeur confirmee) → le candidat est abandonne, c'etait un glitch isole.
+- Si au contraire les lectures suivantes continuent sur la nouvelle trajectoire basse (coherentes entre elles), le candidat est confirme apres `EnvoyMqttService.RESET_CONFIRMATIONS_REQUIRED` (3) lectures consecutives.
+- Une fois confirme, seul le delta depuis la toute premiere lecture candidate est ajoute a `energyFromIndexWh` — l'offset deja accumule par le capteur precedent est preserve integralement (aucune perte d'historique au remplacement physique du capteur).
+- Si les lectures candidates sont elles-memes incoherentes entre elles (rebaisse encore), la fenetre de confirmation redemarre a partir de la derniere valeur.
+
 References code:
 
-- src/mqttService.js:679
-- src/mqttService.js:684
-- src/mqttService.js:706
-- src/mqttService.js:724
+- src/envoyDerivedFields.js:6 (deriveEnvoyFields — toutes les formules ci-dessus)
+- src/mqttService.js:685 (updateTableauElecIndexOffset — detection/confirmation de reset)
+- src/mqttService.js:777 (getTableauElecCorrection — resolution de signedPowerW/energyOffsetWh)
+- src/mqttService.js:788 (deriveFullData — appel unique + ajout de tableau_elec_wNow/whOffset)
 
 ## 7. Mode haute frequence
 
@@ -380,7 +416,8 @@ Comportement:
 
 Reference code:
 
-- src/mqttService.js:342
+- src/mqttService.js:393 (publishRawLoop)
+- src/mqttService.js:422 (applyTableauElecOnRawData)
 
 ## 8. Topics MQTT publies
 
@@ -406,12 +443,12 @@ Reference code:
 
 Reference code:
 
-- src/ha/energySensors.js:38
+- src/ha/energySensors.js:42
 
 ## 9. Cas limites et garanties
 
 - Si index_field absent: correction energie externe desactivee (offset = 0)
-- Si index recule fortement: delta ignore puis baseline mise a jour
+- Si index recule fortement (delta < -1 Wh): reset non committe immediatement, mis en attente de confirmation sur 3 lectures consecutives coherentes (voir 6.3) — protege contre un payload glitché (null/0) isole
 - Si erreur endpoint: la boucle continue, warning logge
 - Si token expire/401: reauth + retry automatique
 
