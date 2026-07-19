@@ -11,7 +11,8 @@ services:
     # Le process cherche ./config.yaml dans le WORKDIR (/app)
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-
+      - ./data:/app/data
+      
     # Optionnel: si tu veux forcer un fuseau côté conteneur
     # (la logique utilise surtout `timezone.name` dans le YAML)
     environment:
