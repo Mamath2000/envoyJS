@@ -13,8 +13,8 @@ import {
 
 const tableauElecRuntimeState = {
   currentPowerW: 0,
-  energyOffsetWh: 0,
-  lastIntegrationTs: undefined,
+  energyFromIndexWh: 0,
+  lastIndexWh: undefined,
 };
 
 export class EnvoyMqttService {
@@ -50,7 +50,10 @@ export class EnvoyMqttService {
     this.tableauElec = {
       enabled: Boolean(this.config.tableauElecEnabled),
       topic: this.config.tableauElecTopic,
-      jsonField: this.config.tableauElecJsonField,
+      powerField: this.config.tableauElecPowerField,
+      indexField: this.config.tableauElecIndexField,
+      indexUnit: this.config.tableauElecIndexUnit,
+      stateFilePath: this.resolveTableauElecStateFilePath(this.config.tableauElecStateFile),
       sign: Number.isFinite(Number(this.config.tableauElecSign)) ? Number(this.config.tableauElecSign) : 1,
       state: tableauElecRuntimeState,
     };
@@ -130,6 +133,80 @@ export class EnvoyMqttService {
     return { date, hour, minute, second };
   }
 
+  resolveTableauElecStateFilePath(configuredPath) {
+    const fallback = path.join(process.cwd(), "data", "tableau-elec-state.json");
+    const p = String(configuredPath ?? "").trim();
+    if (!p) return fallback;
+    if (path.isAbsolute(p)) return p;
+    return path.join(process.cwd(), p);
+  }
+
+  loadTableauElecStateFromDisk() {
+    if (!this.tableauElec.enabled || !this.tableauElec.indexField) return;
+
+    const stateFilePath = this.tableauElec.stateFilePath;
+    if (!stateFilePath || !fs.existsSync(stateFilePath)) return;
+
+    try {
+      const raw = fs.readFileSync(stateFilePath, "utf-8");
+      const persisted = JSON.parse(raw);
+
+      const lastIndexWh = Number(persisted?.lastIndexWh);
+      const energyFromIndexWh = Number(persisted?.energyFromIndexWh);
+
+      if (Number.isFinite(lastIndexWh)) {
+        this.tableauElec.state.lastIndexWh = lastIndexWh;
+      }
+
+      if (Number.isFinite(energyFromIndexWh)) {
+        this.tableauElec.state.energyFromIndexWh = energyFromIndexWh;
+      }
+
+      this.log.info("etat tableau elec restauré depuis disque", {
+        stateFilePath,
+        hasLastIndex: Number.isFinite(this.tableauElec.state.lastIndexWh),
+        energyFromIndexWh: Math.round(this.tableauElec.state.energyFromIndexWh || 0),
+      });
+    } catch (err) {
+      this.log.warn("impossible de lire l'etat tableau elec", {
+        stateFilePath,
+        message: err?.message ?? String(err),
+      });
+    }
+  }
+
+  saveTableauElecStateToDisk() {
+    if (!this.tableauElec.enabled || !this.tableauElec.indexField) return;
+
+    const stateFilePath = this.tableauElec.stateFilePath;
+    if (!stateFilePath) return;
+
+    try {
+      const stateDir = path.dirname(stateFilePath);
+      fs.mkdirSync(stateDir, { recursive: true });
+
+      const payload = {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        lastIndexWh: Number.isFinite(this.tableauElec.state.lastIndexWh)
+          ? this.tableauElec.state.lastIndexWh
+          : null,
+        energyFromIndexWh: Number.isFinite(this.tableauElec.state.energyFromIndexWh)
+          ? this.tableauElec.state.energyFromIndexWh
+          : 0,
+      };
+
+      const tmpPath = `${stateFilePath}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(payload), "utf-8");
+      fs.renameSync(tmpPath, stateFilePath);
+    } catch (err) {
+      this.log.warn("impossible de sauvegarder l'etat tableau elec", {
+        stateFilePath,
+        message: err?.message ?? String(err),
+      });
+    }
+  }
+
   async start() {
     this.running = true;
 
@@ -154,11 +231,16 @@ export class EnvoyMqttService {
     await this.publishStatus("online");
 
     this.installMqttListeners(client);
+    this.loadTableauElecStateFromDisk();
+
+    if (this.tableauElec.enabled && !this.tableauElec.indexField) {
+      this.log.warn("tableau elec sans index_field: correction energie des compteurs desactivée (puissance instantanee uniquement)");
+    }
+
     await sleep(10_000);
 
     try {
       const envoyData = await this.api.getAllEnvoyData();
-      this.integrateTableauElecEnergy(Date.now());
       const currentData = this.applyTableauElecOnConsoNet(envoyData);
       await this.initializeMissingReferences(currentData);
 
@@ -214,7 +296,7 @@ export class EnvoyMqttService {
   async stop() {
     this.running = false;
 
-    this.integrateTableauElecEnergy(Date.now());
+    this.saveTableauElecStateToDisk();
 
     if (this.mqttClient) {
       try {
@@ -239,9 +321,12 @@ export class EnvoyMqttService {
       client.subscribe(this.tableauElec.topic);
       this.log.info("capteur tableau elec MQTT activé", {
         topic: this.tableauElec.topic,
-        jsonField: this.tableauElec.jsonField,
+        powerField: this.tableauElec.powerField,
+        indexField: this.tableauElec.indexField,
+          indexUnit: this.tableauElec.indexUnit,
         sign: this.tableauElec.sign,
-        persistence: "mémoire process",
+          stateFilePath: this.tableauElec.stateFilePath,
+          persistence: "fichier + mémoire process",
       });
     }
 
@@ -260,13 +345,16 @@ export class EnvoyMqttService {
       }
 
       if (this.tableauElec.enabled && this.tableauElec.topic && topic === this.tableauElec.topic) {
-        const powerW = this.parseTableauElecPayload(payload);
-        if (!Number.isFinite(powerW)) return;
+        const { powerW, indexWh } = this.parseTableauElecPayload(payload);
+        if (!Number.isFinite(powerW) && !Number.isFinite(indexWh)) return;
 
-        const nowTs = Date.now();
-        this.integrateTableauElecEnergy(nowTs);
-        this.tableauElec.state.currentPowerW = Number(powerW);
-        this.tableauElec.state.lastIntegrationTs = nowTs;
+        if (Number.isFinite(powerW)) {
+          this.tableauElec.state.currentPowerW = Number(powerW);
+        }
+
+        if (Number.isFinite(indexWh)) {
+          this.updateTableauElecIndexOffset(indexWh);
+        }
       }
     });
   }
@@ -280,7 +368,6 @@ export class EnvoyMqttService {
       const start = Date.now();
       try {
         const rawData = await this.api.getRawData({ debug: false });
-        this.integrateTableauElecEnergy(Date.now());
         const adjustedRawData = this.applyTableauElecOnRawData(rawData);
 
         for (const [field, value] of Object.entries(adjustedRawData)) {
@@ -326,7 +413,6 @@ export class EnvoyMqttService {
       const start = Date.now();
       try {
         const envoyData = await this.api.getAllEnvoyData();
-        this.integrateTableauElecEnergy(Date.now());
         const fullData = this.applyTableauElecOnConsoNet(envoyData);
         await this.initializeMissingReferences(fullData);
         await this.checkAndUpdateMidnightReferences(fullData);
@@ -490,61 +576,104 @@ export class EnvoyMqttService {
       .reduce((acc, key) => (acc == null ? undefined : acc[key]), obj);
   }
 
+  normalizeTableauElecIndexWh(rawIndex) {
+    const numeric = Number(rawIndex);
+    if (!Number.isFinite(numeric)) return NaN;
+
+    const unit = String(this.tableauElec.indexUnit ?? "auto").toLowerCase();
+    if (unit === "kwh") return numeric * 1000;
+    if (unit === "wh") return numeric;
+
+    // Convention: les index Zigbee2MQTT sont generalement en kWh.
+    // Heuristique: decimal ou valeur "raisonnable" => kWh, sinon Wh.
+    const asString = typeof rawIndex === "string" ? rawIndex.trim() : "";
+    const hasDecimal = asString ? /[.,]/.test(asString) : !Number.isInteger(numeric);
+    const abs = Math.abs(numeric);
+    const looksLikeKwh = hasDecimal || abs <= 10_000;
+    return looksLikeKwh ? numeric * 1000 : numeric;
+  }
+
   parseTableauElecPayload(payload) {
     const strPayload = String(payload ?? "").trim();
-    if (!strPayload) return NaN;
+    if (!strPayload) return { powerW: NaN, indexWh: NaN };
 
-    if (!this.tableauElec.jsonField) {
+    let powerW = NaN;
+    let indexWh = NaN;
+
+    if (!this.tableauElec.powerField) {
       const asNumber = Number(strPayload);
-      if (Number.isFinite(asNumber)) return asNumber;
+      if (Number.isFinite(asNumber)) powerW = asNumber;
     }
 
     try {
       const parsed = JSON.parse(strPayload);
-      if (this.tableauElec.jsonField) {
-        return Number(this.extractByPath(parsed, this.tableauElec.jsonField));
+
+      if (this.tableauElec.powerField) {
+        powerW = Number(this.extractByPath(parsed, this.tableauElec.powerField));
       }
-      if (typeof parsed === "number") return parsed;
-      if (parsed && typeof parsed === "object") {
+
+      if (!Number.isFinite(powerW) && typeof parsed === "number") {
+        powerW = parsed;
+      }
+
+      if (!Number.isFinite(powerW) && parsed && typeof parsed === "object") {
         const candidates = [parsed.power, parsed.watt, parsed.watts, parsed.value, parsed.w];
         for (const candidate of candidates) {
           const n = Number(candidate);
-          if (Number.isFinite(n)) return n;
+          if (Number.isFinite(n)) {
+            powerW = n;
+            break;
+          }
         }
+      }
+
+      if (this.tableauElec.indexField) {
+        const rawIndex = this.extractByPath(parsed, this.tableauElec.indexField);
+        indexWh = this.normalizeTableauElecIndexWh(rawIndex);
       }
     } catch {
       // payload non JSON: déjà tenté en nombre brut
     }
 
-    this.log.debug("message tableau elec ignoré: payload non numérique", {
-      topic: this.tableauElec.topic,
-      preview: strPayload.slice(0, 120),
-    });
-    return NaN;
+    if (!Number.isFinite(powerW) && !Number.isFinite(indexWh)) {
+      this.log.debug("message tableau elec ignoré: payload non numérique", {
+        topic: this.tableauElec.topic,
+        preview: strPayload.slice(0, 120),
+      });
+    }
+
+    return { powerW, indexWh };
   }
 
-  integrateTableauElecEnergy(nowTs) {
-    if (!this.tableauElec.enabled) return;
+  updateTableauElecIndexOffset(indexWh) {
     const state = this.tableauElec.state;
 
-    if (state.lastIntegrationTs == null) {
-      state.lastIntegrationTs = nowTs;
+    if (!Number.isFinite(indexWh)) return;
+
+    if (!Number.isFinite(state.lastIndexWh)) {
+      state.lastIndexWh = indexWh;
+      this.saveTableauElecStateToDisk();
+      this.log.debug("index tableau elec initialisé (valeur absolue ignorée, base différentielle)", {
+        baselineWh: Math.round(indexWh),
+      });
       return;
     }
 
-    const elapsedMs = nowTs - state.lastIntegrationTs;
-    if (elapsedMs <= 0) {
-      state.lastIntegrationTs = nowTs;
+    const deltaWh = indexWh - state.lastIndexWh;
+    if (deltaWh < -1) {
+      this.log.warn("index tableau elec en baisse: reset/rollover detecté, delta ignoré", {
+        previousWh: Math.round(state.lastIndexWh),
+        currentWh: Math.round(indexWh),
+      });
+      state.lastIndexWh = indexWh;
+      this.saveTableauElecStateToDisk();
       return;
     }
 
-    const signedPowerW = state.currentPowerW * this.tableauElec.sign;
-    const deltaWh = (signedPowerW * elapsedMs) / 3_600_000;
-    if (Number.isFinite(deltaWh)) {
-      state.energyOffsetWh += deltaWh;
-    }
-
-    state.lastIntegrationTs = nowTs;
+    const safeDeltaWh = deltaWh < 0 ? 0 : deltaWh;
+    state.energyFromIndexWh += safeDeltaWh * this.tableauElec.sign;
+    state.lastIndexWh = indexWh;
+    this.saveTableauElecStateToDisk();
   }
 
   applyTableauElecOnConsoNet(data) {
@@ -552,7 +681,9 @@ export class EnvoyMqttService {
 
     const adjusted = { ...data };
     const signedPowerW = this.tableauElec.state.currentPowerW * this.tableauElec.sign;
-    const energyOffsetWh = this.tableauElec.state.energyOffsetWh;
+    const energyOffsetWh = this.tableauElec.indexField && Number.isFinite(this.tableauElec.state.lastIndexWh)
+      ? this.tableauElec.state.energyFromIndexWh
+      : 0;
 
     const baseNetPowerW = Number(adjusted.conso_net_eim_wNow ?? 0);
     if (Number.isFinite(baseNetPowerW)) {

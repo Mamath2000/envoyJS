@@ -124,7 +124,11 @@ export function loadConfig() {
 
     tableauElecEnabled: Boolean(cfg?.sensors?.tableau_elec?.enabled ?? false),
     tableauElecTopic: String(cfg?.sensors?.tableau_elec?.topic ?? "").trim(),
-    tableauElecJsonField: String(cfg?.sensors?.tableau_elec?.json_field ?? "").trim() || undefined,
+    tableauElecPowerField:
+      String(cfg?.sensors?.tableau_elec?.power_field ?? cfg?.sensors?.tableau_elec?.json_field ?? "").trim() || undefined,
+    tableauElecIndexField: String(cfg?.sensors?.tableau_elec?.index_field ?? "").trim() || undefined,
+    tableauElecIndexUnit: String(cfg?.sensors?.tableau_elec?.index_unit ?? "auto").trim().toLowerCase(),
+    tableauElecStateFile: String(cfg?.sensors?.tableau_elec?.state_file ?? "").trim() || undefined,
     tableauElecSign: Number(cfg?.sensors?.tableau_elec?.sign ?? 1),
 
     timeZoneName: String(cfg?.timezone?.name ?? "Europe/Paris"),

@@ -40,7 +40,10 @@ sensors:
   tableau_elec:
     enabled: false
     topic: "zigbee2mqtt/charge_ve"
-    json_field: "power"           # optionnel, ex: "payload.power" si JSON imbriqué
+    power_field: "power"          # optionnel, ex: "payload.power" si JSON imbriqué
+    index_field: "energy"         # optionnel, index cumulé (kWh ou Wh) du tableau externe
+    index_unit: "kwh"             # "kwh", "wh" ou "auto" (recommandé: fixer explicitement)
+    state_file: "data/tableau-elec-state.json"  # persistance de baseline/index entre redémarrages
     sign: 1                        # 1 ajoute au net, -1 soustrait
 
 discovery:

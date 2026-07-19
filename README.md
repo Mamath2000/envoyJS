@@ -113,9 +113,15 @@ Voir [config.example.yaml](config.example.yaml).
 - `sensors.pv_production.*` / `sensors.conso_net.*` : capteurs dédiés JSON.
 - `sensors.tableau_elec.*` : capteur MQTT externe injecté dans le calcul de `conso_net`.
   - `topic` : topic MQTT contenant la puissance du tableau (nombre brut ou JSON).
-  - `json_field` (optionnel) : chemin du champ à lire dans le JSON (ex: `payload.power`).
+  - `power_field` (optionnel) : chemin du champ puissance à lire dans le JSON (ex: `payload.power`).
+  - `index_field` (optionnel) : chemin du champ index énergie cumulé (ex: `payload.energy`).
+  - `index_unit` (optionnel, défaut `auto`) : `kwh`, `wh` ou `auto`.
+  - `state_file` (optionnel) : fichier JSON de persistance de l'index/baseline entre redémarrages (ex: `data/tableau-elec-state.json`).
+    - L'énergie externe est corrigée uniquement depuis le différentiel d'index (aucune intégration puissance×temps dans le code).
+    - Le calcul est strictement différentiel: la première valeur reçue sert de baseline et n'est pas ajoutée aux compteurs.
+    - Au redémarrage, l'état est restauré depuis `state_file` pour continuer le calcul sans perdre l'historique.
   - `sign` : `1` pour ajouter au net, `-1` pour soustraire.
-  - Persistance: en mémoire (variable globale du process) pour réutilisation à la volée.
+  - Persistance: fichier (`state_file`) + mémoire process.
 - `timezone.name` : fuseau utilisé pour minuit (snapshots / yesterday).
 - `logging.level` : `silent|error|warn|info|debug`.
 
