@@ -108,6 +108,14 @@
     "state_class": "total_increasing",
     "icon": "mdi:flash"
   },
+  "eco_eim_kwhLifetime": {
+    "name": "Lifetime Energy Economy (kWh)",
+    "platform": "sensor",
+    "unit_of_measurement": "kWh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:flash"
+  },
 
   "conso_all_eim_wNow": {
     "name": "Current Power Consumption",
@@ -172,6 +180,14 @@
     "platform": "sensor",
     "unit_of_measurement": "W",
     "device_class": "power",
+    "state_class": "measurement",
+    "icon": "mdi:transmission-tower"
+  },
+  "tableau_elec_whOffset": {
+    "name": "Tableau Elec Ext Offset",
+    "platform": "sensor",
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
     "state_class": "measurement",
     "icon": "mdi:transmission-tower"
   },

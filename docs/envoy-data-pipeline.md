@@ -403,6 +403,10 @@ Impact sur les calculs journaliers:
 - conso_all_eim_today, conso_net_eim_today, grid_eim_today et eco_eim_today sont corriges,
   car calcules depuis les lifetimes corriges.
 
+#### Autodiscovery Home Assistant
+
+`publishHaAutodiscoveryDynamic()` ignore silencieusement tout champ absent de `src/device-def/sensors-def.json` (voir 8). `eco_eim_kwhLifetime` et `tableau_elec_whOffset` y ont ete ajoutes — ils sont calcules/publies depuis un moment mais n'avaient jamais de definition HA, donc jamais decouverts automatiquement. `tableau_elec_whOffset` est declare en `state_class: measurement` (pas `total_increasing`): sa valeur peut decroitre indefiniment selon le `sign` configure (ex: sign=-1), ce que `total_increasing` interpreterait a tort comme des resets de compteur repetes.
+
 #### Detection de reset/remplacement du capteur externe (protection anti-glitch)
 
 Un payload MQTT glitché (`null` ou `0` ponctuel, ex: device Zigbee qui se reveille) est indiscernable, sur une seule lecture, d'un vrai remplacement de capteur (compteur qui repart de 0). `updateTableauElecIndexOffset()` n'applique donc jamais un reset sur une seule baisse d'index detectee (delta < -1 Wh par rapport a la derniere valeur confirmee):
