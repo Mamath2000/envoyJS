@@ -111,6 +111,11 @@ Voir [config.example.yaml](config.example.yaml).
   - `discovery.topic` (optionnel) : override du topic de config.
   - `discovery.qos_config` (défaut 1) : QoS du message discovery.
 - `sensors.pv_production.*` / `sensors.conso_net.*` : capteurs dédiés JSON.
+- `sensors.tableau_elec.*` : capteur MQTT externe injecté dans le calcul de `conso_net`.
+  - `topic` : topic MQTT contenant la puissance du tableau (nombre brut ou JSON).
+  - `json_field` (optionnel) : chemin du champ à lire dans le JSON (ex: `payload.power`).
+  - `sign` : `1` pour ajouter au net, `-1` pour soustraire.
+  - Persistance: en mémoire (variable globale du process) pour réutilisation à la volée.
 - `timezone.name` : fuseau utilisé pour minuit (snapshots / yesterday).
 - `logging.level` : `silent|error|warn|info|debug`.
 

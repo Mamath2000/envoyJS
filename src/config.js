@@ -122,6 +122,11 @@ export function loadConfig() {
     consoNetTopic: String(cfg?.sensors?.conso_net?.topic ?? "envoy/conso_net_energy"),
     consoNetSensorName: String(cfg?.sensors?.conso_net?.name ?? "Conso Nette Energy"),
 
+    tableauElecEnabled: Boolean(cfg?.sensors?.tableau_elec?.enabled ?? false),
+    tableauElecTopic: String(cfg?.sensors?.tableau_elec?.topic ?? "").trim(),
+    tableauElecJsonField: String(cfg?.sensors?.tableau_elec?.json_field ?? "").trim() || undefined,
+    tableauElecSign: Number(cfg?.sensors?.tableau_elec?.sign ?? 1),
+
     timeZoneName: String(cfg?.timezone?.name ?? "Europe/Paris"),
     logLevel: String(cfg?.logging?.level ?? "info"),
   };

@@ -31,10 +31,17 @@ sensors:
     enabled: true
     topic: "envoy/pv_production_energy"
     name: "PV Production Energy"
+
   conso_net:
     enabled: true
     topic: "envoy/conso_net_energy"
     name: "Conso Nette Energy"
+    
+  tableau_elec:
+    enabled: false
+    topic: "zigbee2mqtt/charge_ve"
+    json_field: "power"           # optionnel, ex: "payload.power" si JSON imbriqué
+    sign: 1                        # 1 ajoute au net, -1 soustrait
 
 discovery:
   enabled: true

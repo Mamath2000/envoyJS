@@ -167,6 +167,15 @@
     "icon": "mdi:flash"
   },
 
+  "tableau_elec_wNow": {
+    "name": "Tableau Elec Ext",
+    "platform": "sensor",
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement",
+    "icon": "mdi:transmission-tower"
+  },
+
   "timestamp": {
     "name": "Last Update Timestamp",
     "platform": "sensor",
