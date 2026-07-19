@@ -14,6 +14,13 @@ export class EnvoyApi {
   // requetes, voir getMetersReadings).
   static METERS_INFO_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
+  // Backoff exponentiel plafonné sur les echecs d'authentification Enphase
+  // (cloud, rate-limité). Sans ca, un identifiant revoque ou une panne cloud
+  // ferait retenter un login a chaque appel — potentiellement plusieurs fois
+  // par seconde en mode haute frequence (voir ensureAuthenticated).
+  static AUTH_BACKOFF_BASE_MS = 30_000;
+  static AUTH_BACKOFF_MAX_MS = 30 * 60_000;
+
   constructor(options) {
     this.username = options.username;
     this.password = options.password;
@@ -41,6 +48,8 @@ export class EnvoyApi {
     this.eidMappingCache = undefined;
     this.eidMappingCacheAt = undefined;
     this.authenticatingPromise = undefined;
+    this.authFailureCount = 0;
+    this.authBackoffUntil = 0;
   }
 
   get isTokenValid() {
@@ -58,10 +67,37 @@ export class EnvoyApi {
   async ensureAuthenticated({ debug, force = false } = {}) {
     if (!force && this.isTokenValid) return;
 
+    const now = Date.now();
+    if (now < this.authBackoffUntil) {
+      throw new Error(
+        `Authentification Enphase en pause (backoff) après ${this.authFailureCount} échec(s) consécutif(s), nouvelle tentative après ${new Date(this.authBackoffUntil).toISOString()}`,
+      );
+    }
+
     if (!this.authenticatingPromise) {
-      this.authenticatingPromise = this.authenticate({ debug }).finally(() => {
-        this.authenticatingPromise = undefined;
-      });
+      this.authenticatingPromise = this.authenticate({ debug })
+        .then(() => {
+          this.authFailureCount = 0;
+          this.authBackoffUntil = 0;
+        })
+        .catch((err) => {
+          this.authFailureCount += 1;
+          const backoffMs = Math.min(
+            EnvoyApi.AUTH_BACKOFF_MAX_MS,
+            EnvoyApi.AUTH_BACKOFF_BASE_MS * 2 ** (this.authFailureCount - 1),
+          );
+          this.authBackoffUntil = Date.now() + backoffMs;
+          this.log.warn("authentification Enphase échouée: backoff activé", {
+            consecutiveFailures: this.authFailureCount,
+            backoffMs,
+            retryAfter: new Date(this.authBackoffUntil).toISOString(),
+            message: err?.message ?? String(err),
+          });
+          throw err;
+        })
+        .finally(() => {
+          this.authenticatingPromise = undefined;
+        });
     }
 
     await this.authenticatingPromise;
