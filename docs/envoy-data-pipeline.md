@@ -53,7 +53,7 @@ Points importants:
 - timeout cloud: max(8000ms, timeout local)
 - timeout local Envoy: config http.timeout_ms
 - option insecure TLS possible (certificat auto-signe)
-- les requetes Envoy independantes (meters/readings, consumption, production v1) sont lancees en parallele (`Promise.all`) plutot que sequentiellement — voir 3.x. `ensureAuthenticated()` (src/envoyApi.js:50) garantit qu'une seule authentification est en vol a la fois meme si plusieurs requetes paralleles detectent un token invalide simultanement (single-flight): les appels concurrents attendent la meme promesse au lieu de relancer chacun un login.
+- les requetes Envoy independantes (meters/readings, consumption, production v1) sont lancees en parallele (`Promise.all`) plutot que sequentiellement — voir 3.x. `ensureAuthenticated()` (src/envoyApi.js:58) garantit qu'une seule authentification est en vol a la fois meme si plusieurs requetes paralleles detectent un token invalide simultanement (single-flight): les appels concurrents attendent la meme promesse au lieu de relancer chacun un login.
 - l'Envoy est un device embarqué qui pourrait ne pas gerer 3 requetes concurrentes aussi bien qu'un serveur classique (traitement interne serialisé, timeouts). `getMetersReadings()`, `getRawData()` et `getAllEnvoyData()` logguent chacun leur duree totale en `debug` (`"... terminé (parallèle)"`, avec `durationMs`) — a surveiller en conditions reelles (`LOG_LEVEL=debug`) pour confirmer que le parallelisme aide reellement et ne provoque pas de timeouts/erreurs qui n'existaient pas avant.
 
 Reference code:
@@ -89,9 +89,11 @@ Resultat interne:
 }
 ```
 
+Ce mapping est mis en cache en memoire avec un TTL (`EnvoyApi.METERS_INFO_CACHE_TTL_MS`, 6h par defaut) plutot que cache indefiniment: si l'Envoy reassigne un jour ses eids (firmware, ajout/retrait d'une pince), le service se corrige tout seul en quelques heures sans necessiter de redemarrage manuel. `clearCache()` permet aussi de forcer un rafraichissement immediat. Le TTL evite de resolliciter l'Envoy a chaque cycle (l'appel `/ivp/meters` reste rare), important pour la boucle haute frequence.
+
 Reference code:
 
-- src/envoyApi.js:250 (getMetersInfo)
+- src/envoyApi.js:258 (getMetersInfo)
 
 ### 3.2 GET /ivp/meters/readings
 
@@ -132,7 +134,7 @@ Resultat interne apres mapping par role:
 
 Reference code:
 
-- src/envoyApi.js:271 (getMetersReadings)
+- src/envoyApi.js:283 (getMetersReadings)
 
 ### 3.3 GET /ivp/meters/reports/consumption
 
@@ -171,7 +173,7 @@ Resultat interne:
 
 Reference code:
 
-- src/envoyApi.js:295 (getConsumptionReports)
+- src/envoyApi.js:307 (getConsumptionReports)
 
 ### 3.4 GET /api/v1/production
 
@@ -187,7 +189,7 @@ Exemple de retour utile:
 
 Reference code:
 
-- src/envoyApi.js:310 (getProductionV1)
+- src/envoyApi.js:324 (getProductionV1)
 
 ## 4. Objets de sortie internes
 
@@ -206,7 +208,7 @@ Objet compact pour la boucle haute frequence:
 
 Reference code:
 
-- src/envoyApi.js:317 (getRawData)
+- src/envoyApi.js:329 (getRawData)
 
 ### 4.2 Sortie getAllEnvoyData
 
@@ -230,7 +232,7 @@ Note: `grid_eim_wNow`, `grid_eim_wNow_binary`, `eco_eim_wNow`, `eco_eim_whLifeti
 
 Reference code:
 
-- src/envoyApi.js:337
+- src/envoyApi.js:349
 
 ### 4.3 Sortie deriveEnvoyFields
 

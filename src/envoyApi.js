@@ -7,6 +7,13 @@ const ENTREZ_TOKEN_URL = "https://entrez.enphaseenergy.com/tokens";
 const ENVOY_AUTH_CHECK_ENDPOINT = "/auth/check_jwt";
 
 export class EnvoyApi {
+  // Duree de vie du cache du mapping eid -> role (/ivp/meters). Un cache permanent
+  // obligerait a redemarrer le service si l'Envoy reassigne un jour ses eids
+  // (firmware, ajout/retrait d'une pince) ; un TTL permet de s'auto-reparer sans
+  // resollicité l'Envoy a chaque cycle (l'appel est fait en parallele des autres
+  // requetes, voir getMetersReadings).
+  static METERS_INFO_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
   constructor(options) {
     this.username = options.username;
     this.password = options.password;
@@ -32,6 +39,7 @@ export class EnvoyApi {
     this.authToken = undefined;
     this.tokenExpiresAt = undefined;
     this.eidMappingCache = undefined;
+    this.eidMappingCacheAt = undefined;
     this.authenticatingPromise = undefined;
   }
 
@@ -248,7 +256,10 @@ export class EnvoyApi {
   }
 
   async getMetersInfo({ debug } = {}) {
-    if (this.eidMappingCache) return this.eidMappingCache;
+    const cacheAge = this.eidMappingCacheAt ? Date.now() - this.eidMappingCacheAt : Infinity;
+    if (this.eidMappingCache && cacheAge < EnvoyApi.METERS_INFO_CACHE_TTL_MS) {
+      return this.eidMappingCache;
+    }
 
     const metersInfo = await this.makeRequest("/ivp/meters", { debug });
     const eidMapping = {};
@@ -265,6 +276,7 @@ export class EnvoyApi {
     }
 
     this.eidMappingCache = eidMapping;
+    this.eidMappingCacheAt = Date.now();
     return eidMapping;
   }
 
@@ -444,5 +456,6 @@ export class EnvoyApi {
 
   clearCache() {
     this.eidMappingCache = undefined;
+    this.eidMappingCacheAt = undefined;
   }
 }
