@@ -364,6 +364,7 @@ export class EnvoyMqttService {
       const topic = `${this.topicData}/${sensor}_00h`;
       client.subscribe(topic);
     }
+    client.subscribe(`${this.topicData}/last_midnight_check`);
 
     if (this.tableauElec.enabled && this.tableauElec.topic) {
       client.subscribe(this.tableauElec.topic);
@@ -389,6 +390,14 @@ export class EnvoyMqttService {
           if (Number.isFinite(v)) {
             this.midnightReferences[sensor] = v;
           }
+        }
+      }
+
+      if (topic === `${this.topicData}/last_midnight_check` && this.lastMidnightCheck === undefined) {
+        const v = String(payload ?? "").trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          this.lastMidnightCheck = v;
+          this.log.info("dernier jour de rollover restauré depuis MQTT (retained)", { lastMidnightCheck: v });
         }
       }
 
@@ -586,6 +595,10 @@ export class EnvoyMqttService {
     }
 
     this.lastMidnightCheck = currentDate;
+    // Publié en retained (comme les topics _00h) pour survivre a un redemarrage:
+    // sans ca, un redemarrage qui tombe pile sur un changement de jour ferait
+    // perdre le rollover _yesterday de ce jour-la (voir doc 5.2).
+    await this.publish(`${this.topicData}/last_midnight_check`, currentDate, { retain: true });
 
     if (this.config.haAutodiscovery && this.mqttClient) {
       const dailyKeys = Object.keys(dailyValues);

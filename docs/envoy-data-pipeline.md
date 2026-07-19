@@ -281,11 +281,24 @@ Et publie:
 - sensor_today = current_lifetime - reference_00h
 - sensor_yesterday lors du passage a minuit
 
+#### Detection du changement de jour
+
+`checkAndUpdateMidnightReferences()` ne s'appuie plus sur une fenetre d'horloge fixe (ex: "entre 00h00 et 00h05"). Elle compare simplement la date courante (`getNowPartsInTz().date`) a la derniere date traitee (`this.lastMidnightCheck`) — des que la date differe, le rollover se declenche, quelle que soit l'heure exacte. Cette approche est independante de `polling.interval_ms` : avec l'ancienne fenetre fixe, un intervalle de polling superieur a quelques minutes pouvait faire rater completement le passage a minuit un jour donne (le rollover n'aurait alors plus jamais lieu ce jour-la). Avec la detection par changement de date, le rollover se declenche systematiquement des la premiere iteration de boucle qui observe un nouveau jour — seule sa **precision** depend de la frequence de polling (avec un intervalle tres long, la reference _00h/_yesterday est capturee plus tard dans la journee que minuit exact, mais elle finit toujours par etre capturee).
+
+Le tout premier appel apres le demarrage du service memorise simplement le jour courant sans declencher de rollover (sinon un demarrage en milieu de journee serait pris a tort pour un changement de jour).
+
+#### Persistance de `lastMidnightCheck`
+
+`this.lastMidnightCheck` (dernier jour pour lequel le rollover a ete effectue) est publié en `retain: true` sur `topicData/last_midnight_check`, exactement comme les topics `_00h` — au meme endroit dans le code, juste apres leur republication. `installMqttListeners()` s'y reabonne au demarrage et restaure `lastMidnightCheck` depuis le message retenu (uniquement si aucune valeur n'est deja connue en memoire, et si le payload a bien un format de date `YYYY-MM-DD`).
+
+Sans ca, un redemarrage du service tombant pile sur un changement de jour (arret avant minuit, redemarrage apres) ferait perdre le rollover `_yesterday` de ce jour precis: au redemarrage `lastMidnightCheck` serait `undefined`, et le premier appel se contenterait de memoriser le nouveau jour sans jamais calculer `_yesterday` pour le jour manque. Avec la restauration MQTT, `lastMidnightCheck` retrouve sa vraie valeur (le dernier jour effectivement traite) avant le premier appel de boucle, et le rollover manque se declenche normalement.
+
 Reference code:
 
-- src/mqttService.js:540 (initializeMissingReferences)
-- src/mqttService.js:553 (checkAndUpdateMidnightReferences)
-- src/mqttService.js:822 (calculateDailyValues)
+- src/mqttService.js:362 (installMqttListeners — souscription + restauration)
+- src/mqttService.js:549 (initializeMissingReferences)
+- src/mqttService.js:562 (checkAndUpdateMidnightReferences — publication retained)
+- src/mqttService.js:845 (calculateDailyValues)
 
 ## 6. Integration du tableau electrique deporte
 
@@ -439,6 +452,7 @@ Reference code:
 - base/serial/data/*_00h (retained)
 - base/serial/data/*_today (retained)
 - base/serial/data/*_yesterday (retained)
+- base/serial/data/last_midnight_check (retained, technique — dernier jour de rollover, voir 5.2)
 
 ### 8.3 Donnees raw
 
