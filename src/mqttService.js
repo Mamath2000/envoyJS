@@ -18,6 +18,14 @@ export class EnvoyMqttService {
   // capteur tableau elec (protege contre un payload glitché isolé, ex: null/0).
   static RESET_CONFIRMATIONS_REQUIRED = 3;
 
+  // Intervalle minimum entre deux ecritures disque "non critiques" de l'etat
+  // tableau elec (progression normale de l'index). lastIndexWh/energyFromIndexWh
+  // sont toujours ecrits ensemble: perdre des ecritures intermediaires n'a pas
+  // d'impact sur l'exactitude (le prochain delta recalcule le meme total depuis
+  // le dernier point sauvegardé). Les transitions rares (baseline, reset en
+  // cours/confirmé, arret du service) ne sont jamais throttlées.
+  static TABLEAU_ELEC_SAVE_THROTTLE_MS = 60 * 60 * 1000;
+
   constructor({ config, api, log } = {}) {
     this.config = config;
     this.api = api;
@@ -63,6 +71,9 @@ export class EnvoyMqttService {
         pendingResetLastSeenWh: undefined,
         pendingResetCount: 0,
       },
+      // Bookkeeping en memoire uniquement (non persisté sur disque) pour le
+      // throttle des sauvegardes non critiques.
+      lastSavedAt: 0,
     };
 
     this.haDevice = {
@@ -198,11 +209,16 @@ export class EnvoyMqttService {
     }
   }
 
-  saveTableauElecStateToDisk() {
+  saveTableauElecStateToDisk(force = false) {
     if (!this.tableauElec.enabled || !this.tableauElec.indexField) return;
 
     const stateFilePath = this.tableauElec.stateFilePath;
     if (!stateFilePath) return;
+
+    const now = Date.now();
+    if (!force && now - this.tableauElec.lastSavedAt < EnvoyMqttService.TABLEAU_ELEC_SAVE_THROTTLE_MS) {
+      return;
+    }
 
     try {
       const stateDir = path.dirname(stateFilePath);
@@ -231,6 +247,7 @@ export class EnvoyMqttService {
       const tmpPath = `${stateFilePath}.tmp`;
       fs.writeFileSync(tmpPath, JSON.stringify(payload), "utf-8");
       fs.renameSync(tmpPath, stateFilePath);
+      this.tableauElec.lastSavedAt = now;
     } catch (err) {
       this.log.warn("impossible de sauvegarder l'etat tableau elec", {
         stateFilePath,
@@ -327,7 +344,7 @@ export class EnvoyMqttService {
   async stop() {
     this.running = false;
 
-    this.saveTableauElecStateToDisk();
+    this.saveTableauElecStateToDisk(true);
 
     if (this.mqttClient) {
       try {
@@ -689,7 +706,7 @@ export class EnvoyMqttService {
 
     if (!Number.isFinite(state.lastIndexWh)) {
       state.lastIndexWh = indexWh;
-      this.saveTableauElecStateToDisk();
+      this.saveTableauElecStateToDisk(true);
       this.log.debug("index tableau elec initialisé (valeur absolue ignorée, base différentielle)", {
         baselineWh: Math.round(indexWh),
       });
@@ -731,7 +748,7 @@ export class EnvoyMqttService {
       state.pendingResetIndexWh = indexWh;
       state.pendingResetLastSeenWh = indexWh;
       state.pendingResetCount = 1;
-      this.saveTableauElecStateToDisk();
+      this.saveTableauElecStateToDisk(true);
       this.log.debug("index tableau elec: candidat de reset instable, fenetre redemarrée", {
         candidateWh: Math.round(indexWh),
       });
@@ -746,7 +763,7 @@ export class EnvoyMqttService {
       state.pendingResetLastSeenWh = indexWh;
       state.pendingResetCount += 1;
     }
-    this.saveTableauElecStateToDisk();
+    this.saveTableauElecStateToDisk(true);
 
     if (state.pendingResetCount < EnvoyMqttService.RESET_CONFIRMATIONS_REQUIRED) {
       this.log.warn("index tableau elec en baisse: en attente de confirmation avant reset", {
@@ -767,7 +784,7 @@ export class EnvoyMqttService {
     state.energyFromIndexWh += safeDeltaWh * this.tableauElec.sign;
     state.lastIndexWh = indexWh;
     this.clearPendingTableauElecReset();
-    this.saveTableauElecStateToDisk();
+    this.saveTableauElecStateToDisk(true);
     this.log.warn("index tableau elec: reset/remplacement du capteur confirmé", {
       previousWh: Math.round(previousConfirmedWh),
       newBaselineWh: Math.round(indexWh),

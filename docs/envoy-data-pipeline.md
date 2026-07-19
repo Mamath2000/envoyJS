@@ -281,9 +281,9 @@ Et publie:
 
 Reference code:
 
-- src/mqttService.js:523 (initializeMissingReferences)
-- src/mqttService.js:536 (checkAndUpdateMidnightReferences)
-- src/mqttService.js:805 (calculateDailyValues)
+- src/mqttService.js:540 (initializeMissingReferences)
+- src/mqttService.js:553 (checkAndUpdateMidnightReferences)
+- src/mqttService.js:822 (calculateDailyValues)
 
 ## 6. Integration du tableau electrique deporte
 
@@ -333,22 +333,28 @@ Le fichier state_file (par defaut data/tableau-elec-state.json) stocke:
 
 Mise a jour du fichier:
 
-- a la premiere baseline
-- a chaque delta valide
-- a chaque lecture candidate/confirmee d'un reset (voir 6.3)
-- a l arret du service
+- a la premiere baseline (immediat)
+- a chaque delta "normal" valide, mais throttlé a `EnvoyMqttService.TABLEAU_ELEC_SAVE_THROTTLE_MS` (1h par defaut) — voir note ci-dessous
+- a chaque lecture candidate/confirmee d'un reset, sans throttle (voir 6.3)
+- a l arret du service (`stop()`), sans throttle
+
+#### Throttle des ecritures disque
+
+`saveTableauElecStateToDisk(force = false)` ignore les appels non forcés survenant moins de `TABLEAU_ELEC_SAVE_THROTTLE_MS` apres la derniere ecriture reussie — utile si le capteur externe publie tres frequemment (plusieurs fois par seconde), pour eviter d'ecrire sur disque a chaque message. Ce throttle ne s'applique qu'a la progression "normale" de l'index (le cas le plus frequent); les baselines, transitions de detection de reset et l'arret du service forcent toujours l'ecriture (`force = true`).
+
+Ce throttle est sans risque pour l'exactitude: `lastIndexWh` et `energyFromIndexWh` sont toujours ecrits ensemble comme une paire coherente. Si le service redemarre entre deux ecritures (crash, coupure), le prochain message recalcule un delta plus grand depuis le dernier point sauvegardé, ce qui redonne le meme total accumulé (propriete telescopique de la somme de deltas) — au pire, une confirmation de reset en cours (voir 6.3) redemarre a zero, ce qui est le comportement "safe by default" recherché.
 
 Reference code:
 
-- src/mqttService.js:143 (resolveTableauElecStateFilePath)
-- src/mqttService.js:201 (saveTableauElecStateToDisk)
-- src/mqttService.js:685 (updateTableauElecIndexOffset)
+- src/mqttService.js:154 (resolveTableauElecStateFilePath)
+- src/mqttService.js:212 (saveTableauElecStateToDisk)
+- src/mqttService.js:702 (updateTableauElecIndexOffset)
 
 ### 6.3 Corrections appliquees dans le code (detail)
 
 Le principe est bien celui que tu decris: le tableau deporte sert a corriger un ecart sur les donnees Envoy.
 
-Depuis la refonte, la correction n'est plus appliquee "apres coup" sur un objet deja calcule: `EnvoyMqttService.getTableauElecCorrection()` (src/mqttService.js:672) resout `{ signedPowerW, energyOffsetWh }` a partir de l'etat courant du tableau elec (0 si desactive), puis `deriveFullData()` (src/mqttService.js:683) transmet cette correction a `deriveEnvoyFields()` en un seul appel — c'est cette meme fonction qui calcule aussi bien les champs de base (5.1) que la correction, il n'y a plus de double calcul.
+Depuis la refonte, la correction n'est plus appliquee "apres coup" sur un objet deja calcule: `EnvoyMqttService.getTableauElecCorrection()` (src/mqttService.js:794) resout `{ signedPowerW, energyOffsetWh }` a partir de l'etat courant du tableau elec (0 si desactive), puis `deriveFullData()` (src/mqttService.js:805) transmet cette correction a `deriveEnvoyFields()` en un seul appel — c'est cette meme fonction qui calcule aussi bien les champs de base (5.1) que la correction, il n'y a plus de double calcul.
 
 Le code applique les corrections suivantes (dans src/envoyDerivedFields.js).
 
@@ -395,9 +401,9 @@ Un payload MQTT glitché (`null` ou `0` ponctuel, ex: device Zigbee qui se revei
 References code:
 
 - src/envoyDerivedFields.js:6 (deriveEnvoyFields — toutes les formules ci-dessus)
-- src/mqttService.js:685 (updateTableauElecIndexOffset — detection/confirmation de reset)
-- src/mqttService.js:777 (getTableauElecCorrection — resolution de signedPowerW/energyOffsetWh)
-- src/mqttService.js:788 (deriveFullData — appel unique + ajout de tableau_elec_wNow/whOffset)
+- src/mqttService.js:702 (updateTableauElecIndexOffset — detection/confirmation de reset)
+- src/mqttService.js:794 (getTableauElecCorrection — resolution de signedPowerW/energyOffsetWh)
+- src/mqttService.js:805 (deriveFullData — appel unique + ajout de tableau_elec_wNow/whOffset)
 
 ## 7. Mode haute frequence
 
@@ -416,8 +422,8 @@ Comportement:
 
 Reference code:
 
-- src/mqttService.js:393 (publishRawLoop)
-- src/mqttService.js:422 (applyTableauElecOnRawData)
+- src/mqttService.js:410 (publishRawLoop)
+- src/mqttService.js:439 (applyTableauElecOnRawData)
 
 ## 8. Topics MQTT publies
 
