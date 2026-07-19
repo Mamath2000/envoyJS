@@ -32,12 +32,31 @@ export class EnvoyApi {
     this.authToken = undefined;
     this.tokenExpiresAt = undefined;
     this.eidMappingCache = undefined;
+    this.authenticatingPromise = undefined;
   }
 
   get isTokenValid() {
     if (!this.authToken) return false;
     if (this.tokenExpiresAt && Date.now() > this.tokenExpiresAt) return false;
     return true;
+  }
+
+  // Les appels HTTP independants (meters/readings, consumption, production) sont
+  // lances en parallele (voir getAllEnvoyData/getRawData/getMetersReadings), donc
+  // plusieurs requetes peuvent detecter un token invalide simultanement. On evite
+  // des logins concurrents (course sur sessionId/authToken) en ne laissant qu'une
+  // seule authentification en vol a la fois; les appelants suivants attendent la
+  // meme promesse au lieu d'en démarrer une nouvelle.
+  async ensureAuthenticated({ debug, force = false } = {}) {
+    if (!force && this.isTokenValid) return;
+
+    if (!this.authenticatingPromise) {
+      this.authenticatingPromise = this.authenticate({ debug }).finally(() => {
+        this.authenticatingPromise = undefined;
+      });
+    }
+
+    await this.authenticatingPromise;
   }
 
   async authenticate({ debug } = {}) {
@@ -169,9 +188,7 @@ export class EnvoyApi {
   async makeRequest(endpoint, { debug } = {}) {
     const startedAt = Date.now();
     if (debug !== false) this.log.debug("http: GET", { endpoint });
-    if (!this.isTokenValid) {
-      await this.authenticate({ debug });
-    }
+    await this.ensureAuthenticated({ debug });
 
     const url = `${this.envoyHost}${endpoint}`;
     const headers = {
@@ -194,7 +211,7 @@ export class EnvoyApi {
 
     if (res.status === 401) {
       if (debug !== false) this.log.debug("http: 401 -> re-auth + retry", { endpoint });
-      await this.authenticate({ debug });
+      await this.ensureAuthenticated({ debug, force: true });
       const ac2 = new AbortController();
       const t2 = setTimeout(() => ac2.abort(), this.timeoutMs);
       const retryRes = await fetch(url, {
@@ -252,8 +269,12 @@ export class EnvoyApi {
   }
 
   async getMetersReadings({ debug } = {}) {
-    const metersInfo = await this.getMetersInfo({ debug });
-    const metersReadings = await this.makeRequest("/ivp/meters/readings", { debug });
+    const startedAt = Date.now();
+    const [metersInfo, metersReadings] = await Promise.all([
+      this.getMetersInfo({ debug }),
+      this.makeRequest("/ivp/meters/readings", { debug }),
+    ]);
+    if (debug !== false) this.log.debug("getMetersReadings: terminé (parallèle)", { durationMs: Date.now() - startedAt });
     if (!metersInfo || Object.keys(metersInfo).length === 0) return {};
 
     const processed = {};
@@ -294,8 +315,12 @@ export class EnvoyApi {
   }
 
   async getRawData({ debug } = {}) {
-    const metersData = await this.getMetersReadings({ debug });
-    const consumptionData = await this.getConsumptionReports({ debug });
+    const startedAt = Date.now();
+    const [metersData, consumptionData] = await Promise.all([
+      this.getMetersReadings({ debug }),
+      this.getConsumptionReports({ debug }),
+    ]);
+    if (debug !== false) this.log.debug("getRawData: terminé (parallèle)", { durationMs: Date.now() - startedAt });
 
     const productionMeter = metersData["production"] ?? {};
     const netConsumptionMeter = metersData["net-consumption"] ?? {};
@@ -310,9 +335,13 @@ export class EnvoyApi {
   }
 
   async getAllEnvoyData({ debug } = {}) {
-    const metersData = await this.getMetersReadings({ debug });
-    const consumptionData = await this.getConsumptionReports({ debug });
-    const productionV1Data = await this.getProductionV1({ debug });
+    const startedAt = Date.now();
+    const [metersData, consumptionData, productionV1Data] = await Promise.all([
+      this.getMetersReadings({ debug }),
+      this.getConsumptionReports({ debug }),
+      this.getProductionV1({ debug }),
+    ]);
+    if (debug !== false) this.log.debug("getAllEnvoyData: terminé (parallèle)", { durationMs: Date.now() - startedAt });
 
     const productionMeter = metersData["production"] ?? {};
     const netConsumptionMeter = metersData["net-consumption"] ?? {};

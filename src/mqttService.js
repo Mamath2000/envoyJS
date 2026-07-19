@@ -553,11 +553,21 @@ export class EnvoyMqttService {
   async checkAndUpdateMidnightReferences(currentData) {
     const now = this.getNowPartsInTz();
     const currentDate = now.date;
-    const isNearMidnight = now.hour === 0 && now.minute <= 5;
 
-    if (!isNearMidnight) return;
-    if (this.lastMidnightCheck && this.lastMidnightCheck >= currentDate) return;
+    if (this.lastMidnightCheck === undefined) {
+      // Premier appel depuis le demarrage du service: on memorise juste le jour
+      // courant sans declencher de rollover (sinon un demarrage a 14h serait pris
+      // pour un changement de jour et ecraserait les references _00h a tort).
+      this.lastMidnightCheck = currentDate;
+      return;
+    }
 
+    if (this.lastMidnightCheck === currentDate) return;
+
+    // Le jour a change depuis la derniere iteration de la boucle complete, quelle
+    // que soit l'heure exacte ou la valeur de polling.interval_ms: on ne rate
+    // jamais le rollover (contrairement a une fenetre d'horloge fixe autour de
+    // minuit) — seule sa precision depend de la frequence de polling.
     const dailyValues = this.calculateDailyValues(currentData);
     for (const [sensorToday, value] of Object.entries(dailyValues)) {
       const yesterdayField = sensorToday.replace("_today", "_yesterday");

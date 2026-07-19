@@ -60,3 +60,4 @@ config.yml
 
 # Git
 *.orig
+data/tableau-elec-state.json

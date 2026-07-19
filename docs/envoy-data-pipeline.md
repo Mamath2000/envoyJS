@@ -53,6 +53,8 @@ Points importants:
 - timeout cloud: max(8000ms, timeout local)
 - timeout local Envoy: config http.timeout_ms
 - option insecure TLS possible (certificat auto-signe)
+- les requetes Envoy independantes (meters/readings, consumption, production v1) sont lancees en parallele (`Promise.all`) plutot que sequentiellement — voir 3.x. `ensureAuthenticated()` (src/envoyApi.js:50) garantit qu'une seule authentification est en vol a la fois meme si plusieurs requetes paralleles detectent un token invalide simultanement (single-flight): les appels concurrents attendent la meme promesse au lieu de relancer chacun un login.
+- l'Envoy est un device embarqué qui pourrait ne pas gerer 3 requetes concurrentes aussi bien qu'un serveur classique (traitement interne serialisé, timeouts). `getMetersReadings()`, `getRawData()` et `getAllEnvoyData()` logguent chacun leur duree totale en `debug` (`"... terminé (parallèle)"`, avec `durationMs`) — a surveiller en conditions reelles (`LOG_LEVEL=debug`) pour confirmer que le parallelisme aide reellement et ne provoque pas de timeouts/erreurs qui n'existaient pas avant.
 
 Reference code:
 
@@ -89,7 +91,7 @@ Resultat interne:
 
 Reference code:
 
-- src/envoyApi.js:233 (getMetersInfo)
+- src/envoyApi.js:250 (getMetersInfo)
 
 ### 3.2 GET /ivp/meters/readings
 
@@ -130,7 +132,7 @@ Resultat interne apres mapping par role:
 
 Reference code:
 
-- src/envoyApi.js:254 (getMetersReadings)
+- src/envoyApi.js:271 (getMetersReadings)
 
 ### 3.3 GET /ivp/meters/reports/consumption
 
@@ -169,7 +171,7 @@ Resultat interne:
 
 Reference code:
 
-- src/envoyApi.js:274 (getConsumptionReports)
+- src/envoyApi.js:295 (getConsumptionReports)
 
 ### 3.4 GET /api/v1/production
 
@@ -185,7 +187,7 @@ Exemple de retour utile:
 
 Reference code:
 
-- src/envoyApi.js:291 (getProductionV1)
+- src/envoyApi.js:310 (getProductionV1)
 
 ## 4. Objets de sortie internes
 
@@ -204,7 +206,7 @@ Objet compact pour la boucle haute frequence:
 
 Reference code:
 
-- src/envoyApi.js:296 (getRawData)
+- src/envoyApi.js:317 (getRawData)
 
 ### 4.2 Sortie getAllEnvoyData
 
@@ -228,7 +230,7 @@ Note: `grid_eim_wNow`, `grid_eim_wNow_binary`, `eco_eim_wNow`, `eco_eim_whLifeti
 
 Reference code:
 
-- src/envoyApi.js:312
+- src/envoyApi.js:337
 
 ### 4.3 Sortie deriveEnvoyFields
 
