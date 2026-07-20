@@ -61,3 +61,4 @@ config.yml
 # Git
 *.orig
 data/tableau-elec-state.json
+data/midnight-references-state.json

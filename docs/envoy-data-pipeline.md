@@ -290,18 +290,20 @@ Et publie:
 
 Le tout premier appel apres le demarrage du service memorise simplement le jour courant sans declencher de rollover (sinon un demarrage en milieu de journee serait pris a tort pour un changement de jour).
 
-#### Persistance de `lastMidnightCheck`
+#### Persistance de `midnightReferences` et `lastMidnightCheck`
 
-`this.lastMidnightCheck` (dernier jour pour lequel le rollover a ete effectue) est publié en `retain: true` sur `topicData/last_midnight_check`, exactement comme les topics `_00h` — au meme endroit dans le code, juste apres leur republication. `installMqttListeners()` s'y reabonne au demarrage et restaure `lastMidnightCheck` depuis le message retenu (uniquement si aucune valeur n'est deja connue en memoire, et si le payload a bien un format de date `YYYY-MM-DD`).
+Les references `_00h` et `this.lastMidnightCheck` (dernier jour pour lequel le rollover a ete effectue) sont persistees dans un fichier JSON local (`state.midnight_references_file`, defaut `data/midnight-references-state.json`), ecrit directement (sans etape intermediaire) a chaque changement via `saveMidnightReferencesToDisk()`, et relu de facon synchrone au demarrage via `loadMidnightReferencesFromDisk()` — avant meme la premiere lecture Envoy.
 
-Sans ca, un redemarrage du service tombant pile sur un changement de jour (arret avant minuit, redemarrage apres) ferait perdre le rollover `_yesterday` de ce jour precis: au redemarrage `lastMidnightCheck` serait `undefined`, et le premier appel se contenterait de memoriser le nouveau jour sans jamais calculer `_yesterday` pour le jour manque. Avec la restauration MQTT, `lastMidnightCheck` retrouve sa vraie valeur (le dernier jour effectivement traite) avant le premier appel de boucle, et le rollover manque se declenche normalement.
+Ces valeurs restent egalement publiees en `retain: true` sur MQTT (`topicData/<sensor>_00h`, `topicData/last_midnight_check`) pour rester visibles/debuggables depuis un client MQTT ou Home Assistant, mais ce ne sont plus des topics utilises pour la restauration au demarrage: attendre une redelivrance de messages retained (le service dormait auparavant 10s apres la connexion MQTT pour ca, cf. historique) rendait la restauration fragile et compliquee a corriger manuellement (il fallait republier un message pour corriger une reference). Le fichier local est desormais la seule source de verite au demarrage, et peut se corriger avec un simple editeur de texte.
+
+Sans cette persistance, un redemarrage du service tombant pile sur un changement de jour (arret avant minuit, redemarrage apres) ferait perdre le rollover `_yesterday` de ce jour precis: au redemarrage `lastMidnightCheck` serait `undefined`, et le premier appel se contenterait de memoriser le nouveau jour sans jamais calculer `_yesterday` pour le jour manque.
 
 Reference code:
 
-- src/mqttService.js:362 (installMqttListeners — souscription + restauration)
 - src/mqttService.js:549 (initializeMissingReferences)
-- src/mqttService.js:562 (checkAndUpdateMidnightReferences — publication retained)
+- src/mqttService.js:562 (checkAndUpdateMidnightReferences — persistance + publication retained)
 - src/mqttService.js:845 (calculateDailyValues)
+- src/mqttService.js (loadMidnightReferencesFromDisk / saveMidnightReferencesToDisk)
 
 ## 6. Integration du tableau electrique deporte
 

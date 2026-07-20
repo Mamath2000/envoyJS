@@ -54,6 +54,10 @@ export class EnvoyMqttService {
 
     this.midnightReferences = {};
     this.lastMidnightCheck = undefined;
+    this.midnightReferencesStateFilePath = this.resolveStateFilePath(
+      this.config.midnightReferencesStateFile,
+      "midnight-references-state.json",
+    );
 
     this.tableauElec = {
       enabled: Boolean(this.config.tableauElecEnabled),
@@ -61,7 +65,7 @@ export class EnvoyMqttService {
       powerField: this.config.tableauElecPowerField,
       indexField: this.config.tableauElecIndexField,
       indexUnit: this.config.tableauElecIndexUnit,
-      stateFilePath: this.resolveTableauElecStateFilePath(this.config.tableauElecStateFile),
+      stateFilePath: this.resolveStateFilePath(this.config.tableauElecStateFile, "tableau-elec-state.json"),
       sign: Number.isFinite(Number(this.config.tableauElecSign)) ? Number(this.config.tableauElecSign) : 1,
       state: {
         currentPowerW: 0,
@@ -151,12 +155,82 @@ export class EnvoyMqttService {
     return { date, hour, minute, second };
   }
 
-  resolveTableauElecStateFilePath(configuredPath) {
-    const fallback = path.join(process.cwd(), "data", "tableau-elec-state.json");
+  resolveStateFilePath(configuredPath, defaultFileName) {
+    const fallback = path.join(process.cwd(), "data", defaultFileName);
     const p = String(configuredPath ?? "").trim();
     if (!p) return fallback;
     if (path.isAbsolute(p)) return p;
     return path.join(process.cwd(), p);
+  }
+
+  loadMidnightReferencesFromDisk() {
+    const stateFilePath = this.midnightReferencesStateFilePath;
+    if (!stateFilePath || !fs.existsSync(stateFilePath)) return;
+
+    try {
+      const raw = fs.readFileSync(stateFilePath, "utf-8");
+      const persisted = JSON.parse(raw);
+
+      if (persisted?.midnightReferences && typeof persisted.midnightReferences === "object") {
+        for (const [key, value] of Object.entries(persisted.midnightReferences)) {
+          const numeric = Number(value);
+          if (Number.isFinite(numeric)) this.midnightReferences[key] = numeric;
+        }
+      }
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(persisted?.lastMidnightCheck ?? ""))) {
+        this.lastMidnightCheck = persisted.lastMidnightCheck;
+      }
+
+      this.log.info("references minuit restaurées depuis disque", {
+        stateFilePath,
+        sensors: Object.keys(this.midnightReferences).length,
+        lastMidnightCheck: this.lastMidnightCheck,
+      });
+    } catch (err) {
+      this.log.warn("impossible de lire les references minuit", {
+        stateFilePath,
+        message: err?.message ?? String(err),
+      });
+    }
+  }
+
+  async republishMidnightReferencesToMqtt() {
+    for (const sensor of this.dailySensors) {
+      const refValue = this.midnightReferences[sensor];
+      if (refValue != null) {
+        await this.publish(`${this.topicData}/${sensor}_00h`, String(refValue), { retain: true });
+      }
+
+      const yesterdayField = sensor.replace("_whLifetime", "_yesterday");
+      const yesterdayValue = this.midnightReferences[yesterdayField];
+      if (yesterdayValue != null) {
+        await this.publish(`${this.topicData}/${yesterdayField}`, String(yesterdayValue), { retain: true });
+      }
+    }
+
+    if (this.lastMidnightCheck != null) {
+      await this.publish(`${this.topicData}/last_midnight_check`, this.lastMidnightCheck, { retain: true });
+    }
+  }
+
+  saveMidnightReferencesToDisk() {
+    const stateFilePath = this.midnightReferencesStateFilePath;
+    if (!stateFilePath) return;
+
+    try {
+      fs.mkdirSync(path.dirname(stateFilePath), { recursive: true });
+      const payload = {
+        midnightReferences: this.midnightReferences,
+        lastMidnightCheck: this.lastMidnightCheck ?? null,
+      };
+      fs.writeFileSync(stateFilePath, JSON.stringify(payload), "utf-8");
+    } catch (err) {
+      this.log.warn("impossible de sauvegarder les references minuit", {
+        stateFilePath,
+        message: err?.message ?? String(err),
+      });
+    }
   }
 
   loadTableauElecStateFromDisk() {
@@ -281,12 +355,15 @@ export class EnvoyMqttService {
 
     this.installMqttListeners(client);
     this.loadTableauElecStateFromDisk();
+    this.loadMidnightReferencesFromDisk();
+    // Le fichier disque est la source de verite au demarrage: on republie
+    // immediatement en retained pour resynchroniser MQTT/HA, sans attendre un
+    // eventuel rollover (qui peut n'arriver que 24h plus tard).
+    await this.republishMidnightReferencesToMqtt();
 
     if (this.tableauElec.enabled && !this.tableauElec.indexField) {
       this.log.warn("tableau elec sans index_field: correction energie des compteurs desactivée (puissance instantanee uniquement)");
     }
-
-    await sleep(10_000);
 
     try {
       const currentData = await this.getCorrectedFullData();
@@ -360,12 +437,6 @@ export class EnvoyMqttService {
   }
 
   installMqttListeners(client) {
-    for (const sensor of this.dailySensors) {
-      const topic = `${this.topicData}/${sensor}_00h`;
-      client.subscribe(topic);
-    }
-    client.subscribe(`${this.topicData}/last_midnight_check`);
-
     if (this.tableauElec.enabled && this.tableauElec.topic) {
       client.subscribe(this.tableauElec.topic);
       this.log.info("capteur tableau elec MQTT activé", {
@@ -382,24 +453,6 @@ export class EnvoyMqttService {
     client.on("message", (topicBuf, payloadBuf) => {
       const topic = String(topicBuf);
       const payload = payloadBuf.toString();
-
-      for (const sensor of this.dailySensors) {
-        const refTopic = `${this.topicData}/${sensor}_00h`;
-        if (topic === refTopic) {
-          const v = Number(payload);
-          if (Number.isFinite(v)) {
-            this.midnightReferences[sensor] = v;
-          }
-        }
-      }
-
-      if (topic === `${this.topicData}/last_midnight_check` && this.lastMidnightCheck === undefined) {
-        const v = String(payload ?? "").trim();
-        if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          this.lastMidnightCheck = v;
-          this.log.info("dernier jour de rollover restauré depuis MQTT (retained)", { lastMidnightCheck: v });
-        }
-      }
 
       if (this.tableauElec.enabled && this.tableauElec.topic && topic === this.tableauElec.topic) {
         const { powerW, indexWh } = this.parseTableauElecPayload(payload);
@@ -547,16 +600,19 @@ export class EnvoyMqttService {
   }
 
   async initializeMissingReferences(currentData) {
+    let changed = false;
     for (const sensor of this.dailySensors) {
       const existing = this.midnightReferences[sensor];
       if (existing == null && currentData[sensor] != null) {
         const value = Number(currentData[sensor]);
         if (!Number.isFinite(value)) continue;
         this.midnightReferences[sensor] = value;
+        changed = true;
         const topic = `${this.topicData}/${sensor}_00h`;
         await this.publish(topic, String(value), { retain: true });
       }
     }
+    if (changed) this.saveMidnightReferencesToDisk();
   }
 
   async checkAndUpdateMidnightReferences(currentData) {
@@ -568,6 +624,7 @@ export class EnvoyMqttService {
       // courant sans declencher de rollover (sinon un demarrage a 14h serait pris
       // pour un changement de jour et ecraserait les references _00h a tort).
       this.lastMidnightCheck = currentDate;
+      this.saveMidnightReferencesToDisk();
       return;
     }
 
@@ -595,9 +652,10 @@ export class EnvoyMqttService {
     }
 
     this.lastMidnightCheck = currentDate;
-    // Publié en retained (comme les topics _00h) pour survivre a un redemarrage:
-    // sans ca, un redemarrage qui tombe pile sur un changement de jour ferait
-    // perdre le rollover _yesterday de ce jour-la (voir doc 5.2).
+    this.saveMidnightReferencesToDisk();
+    // Publié en retained (comme les topics _00h), pour affichage/debug uniquement:
+    // la restauration au demarrage se fait desormais depuis le fichier d'etat
+    // (voir doc 5.2), pas depuis ce topic.
     await this.publish(`${this.topicData}/last_midnight_check`, currentDate, { retain: true });
 
     if (this.config.haAutodiscovery && this.mqttClient) {

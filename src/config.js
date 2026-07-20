@@ -131,6 +131,8 @@ export function loadConfig() {
     tableauElecStateFile: String(cfg?.sensors?.tableau_elec?.state_file ?? "").trim() || undefined,
     tableauElecSign: Number(cfg?.sensors?.tableau_elec?.sign ?? 1),
 
+    midnightReferencesStateFile: String(cfg?.state?.midnight_references_file ?? "").trim() || undefined,
+
     timeZoneName: String(cfg?.timezone?.name ?? "Europe/Paris"),
     logLevel: String(cfg?.logging?.level ?? "info"),
   };

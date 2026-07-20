@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { EnvoyMqttService } from "../src/mqttService.js";
 
@@ -15,7 +18,7 @@ function createSilentLog() {
   };
 }
 
-function createService() {
+function createService(configOverrides = {}) {
   const service = new EnvoyMqttService({
     config: {
       mqttBaseTopic: "envoy",
@@ -23,6 +26,7 @@ function createService() {
       timeZoneName: "Europe/Paris",
       logLevel: "silent",
       haAutodiscovery: false,
+      ...configOverrides,
     },
     api: {},
     log: createSilentLog(),
@@ -109,41 +113,62 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
   assert.equal(lastCheckPublish?.payload, "2026-07-20");
 });
 
-test("le dernier jour de rollover est restauré depuis un message MQTT retained au demarrage", () => {
-  const { service } = createService();
+test("les references minuit et le dernier jour de rollover sont restaurés depuis le fichier d'etat au demarrage", () => {
+  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
 
-  const handlers = {};
-  const fakeClient = {
-    subscribe() {},
-    on(event, handler) {
-      handlers[event] = handler;
-    },
-  };
+  try {
+    fs.writeFileSync(
+      stateFilePath,
+      JSON.stringify({
+        midnightReferences: { conso_all_eim_whLifetime: 1000, prod_eim_whLifetime: 2000 },
+        lastMidnightCheck: "2026-07-19",
+      }),
+    );
 
-  service.installMqttListeners(fakeClient);
-  assert.equal(service.lastMidnightCheck, undefined);
+    const { service } = createService({ midnightReferencesStateFile: stateFilePath });
+    service.loadMidnightReferencesFromDisk();
 
-  const topic = `${service.topicData}/last_midnight_check`;
-  handlers.message(Buffer.from(topic), Buffer.from("2026-07-19"));
-
-  assert.equal(service.lastMidnightCheck, "2026-07-19");
+    assert.equal(service.lastMidnightCheck, "2026-07-19");
+    assert.equal(service.midnightReferences.conso_all_eim_whLifetime, 1000);
+    assert.equal(service.midnightReferences.prod_eim_whLifetime, 2000);
+  } finally {
+    fs.rmSync(stateFilePath, { force: true });
+  }
 });
 
-test("un message retained invalide sur last_midnight_check est ignoré", () => {
-  const { service } = createService();
+test("un fichier d'etat avec un lastMidnightCheck invalide est ignoré", () => {
+  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
 
-  const handlers = {};
-  const fakeClient = {
-    subscribe() {},
-    on(event, handler) {
-      handlers[event] = handler;
-    },
-  };
+  try {
+    fs.writeFileSync(stateFilePath, JSON.stringify({ midnightReferences: {}, lastMidnightCheck: "pas-une-date" }));
 
-  service.installMqttListeners(fakeClient);
+    const { service } = createService({ midnightReferencesStateFile: stateFilePath });
+    service.loadMidnightReferencesFromDisk();
 
-  const topic = `${service.topicData}/last_midnight_check`;
-  handlers.message(Buffer.from(topic), Buffer.from("pas-une-date"));
+    assert.equal(service.lastMidnightCheck, undefined);
+  } finally {
+    fs.rmSync(stateFilePath, { force: true });
+  }
+});
 
-  assert.equal(service.lastMidnightCheck, undefined);
+test("checkAndUpdateMidnightReferences ecrit le fichier d'etat lors d'un rollover", async () => {
+  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
+
+  try {
+    const { service } = createService({ midnightReferencesStateFile: stateFilePath });
+    service.getNowPartsInTz = () => ({ date: "2026-07-19", hour: 14, minute: 0, second: 0 });
+    service.midnightReferences = { conso_all_eim_whLifetime: 1000 };
+
+    await service.checkAndUpdateMidnightReferences({ conso_all_eim_whLifetime: 1200 }); // seed, pas de rollover
+    assert.equal(fs.existsSync(stateFilePath), true); // le seed du jour courant est deja persisté
+
+    service.getNowPartsInTz = () => ({ date: "2026-07-20", hour: 14, minute: 0, second: 0 });
+    await service.checkAndUpdateMidnightReferences({ conso_all_eim_whLifetime: 1800 });
+
+    const persisted = JSON.parse(fs.readFileSync(stateFilePath, "utf-8"));
+    assert.equal(persisted.lastMidnightCheck, "2026-07-20");
+    assert.equal(persisted.midnightReferences.conso_all_eim_whLifetime, 1800);
+  } finally {
+    fs.rmSync(stateFilePath, { force: true });
+  }
 });
