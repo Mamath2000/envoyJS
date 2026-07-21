@@ -25,16 +25,21 @@ Le service principal lance deux boucles:
 flowchart TD
 	A[Config YAML] --> B[EnvoyApi]
 	B --> C[Endpoints Envoy]
-	C --> D[Normalisation interne brute]
+	C --> D[getAllEnvoyData: normalisation interne brute]
 	D --> E[deriveEnvoyFields: calcul champs derives + correction tableau]
 	E --> F[Calcul valeurs journalieres]
 	F --> G[Publish MQTT data]
-	D --> H[Publish MQTT raw]
+	C --> D2[getRawData: 4 champs wNow uniquement]
+	D2 --> H2[applyTableauElecOnRawData: correction dupliquee]
+	H2 --> H[Publish MQTT raw]
 	I[Topic tableau externe] --> E
+	I --> H2
 	J[Fichier state tableau] <--> E
 ```
 
 Depuis la refonte, `EnvoyApi.getAllEnvoyData()` ne fait plus que la normalisation brute (renommage de champs, aucun calcul croise). Tous les champs derives (grid, eco, courant, lifetimes corriges) sont calcules en un seul passage par `deriveEnvoyFields()` (src/envoyDerivedFields.js), que le tableau elec soit actif ou non (avec une correction nulle par defaut).
+
+**Attention, chemin separe pour le raw**: la boucle raw n'utilise ni `getAllEnvoyData()` ni `deriveEnvoyFields()`. Elle appelle `EnvoyApi.getRawData()` (src/envoyApi.js:365), une methode distincte qui ne recupere que 4 champs (`conso_all_eim_wNow`, `conso_net_eim_wNow`, `prod_eim_wNow`, `timestamp`), puis `applyTableauElecOnRawData()` (src/mqttService.js:501), qui **duplique** — dans son propre code, separement — la meme correction `+= signedPowerW` que `deriveEnvoyFields()` applique de son cote pour le flux complet. Les deux chemins arrivent au meme resultat pour les champs wNow communs, mais via deux implementations distinctes a maintenir en parallele.
 
 ## 2. Authentification et securite
 
@@ -192,6 +197,21 @@ Reference code:
 
 - src/envoyApi.js:360 (getProductionV1)
 
+### 3.5 Glossaire des champs bruts (API Envoy)
+
+Definitions telles que documentees par l'API Envoy (endpoints ci-dessus), avant tout renommage/calcul par le programme:
+
+- **eid**: identifiant unique d'un compteur (CT) cote Envoy. Sert a associer une lecture de `/ivp/meters/readings` a son role via le mapping `eid -> measurementType` recupere sur `/ivp/meters`.
+- **measurementType**: role d'un compteur retourne par `/ivp/meters` (`production`, `net-consumption`, `total-consumption`, ...). Le programme ne retient que `production` et `net-consumption` pour `/ivp/meters/readings` (voir 3.1).
+- **reportType**: equivalent de `measurementType` mais pour `/ivp/meters/reports/consumption` (`total-consumption` ou `net-consumption`).
+- **instantaneousDemand**: puissance instantanee mesuree par le compteur (W). Pour le compteur bidirectionnel `net-consumption`: negative quand le foyer exporte plus qu'il n'importe a l'instant T, positive quand il importe net.
+- **voltage** / **current** / **pwrFactor**: tension (V), courant (A) et facteur de puissance instantanes mesures par le compteur, sur `/ivp/meters/readings`.
+- **actEnergyDlvd** ("The active energy delivered on this channel"): energie active cumulee **delivree** par ce canal depuis la mise en service. Sur le compteur `production`: production totale (lifetime). Sur le compteur `net-consumption`: energie totale delivree **au** reseau, c'est-a-dire l'**export** cumule.
+- **actEnergyRcvd** ("The active energy received on this channel"): energie active cumulee **recue** par ce canal. Present uniquement sur le compteur `net-consumption`: energie totale recue **du** reseau, c'est-a-dire l'**import** cumule.
+- **currW** / **rmsCurrent** / **rmsVoltage**: puissance instantanee (W) et valeurs RMS de courant/tension, retournees par `/ivp/meters/reports/consumption` (endpoint distinct de `/ivp/meters/readings`, dedie aux rapports de consommation).
+- **whDlvdCum**: cumul d'energie "delivree" (Wh) tel que retourne par `/ivp/meters/reports/consumption`. Pour `total-consumption`: consommation totale du foyer (tous circuits vus par l'Envoy). Pour `net-consumption`: solde net cumule, qui peut **monter et descendre** selon la balance production/consommation du moment (voir 6.3 et 9).
+- **wattHoursToday**: energie produite depuis minuit (Wh) telle que calculee par l'Envoy lui-meme, sur `/api/v1/production`. Republiee telle quelle en `prod_eim_wattHoursToday`, non utilisee pour le calcul interne de `*_today` (voir 5.2, qui recalcule sa propre valeur depuis les references `_00h`).
+
 ## 4. Objets de sortie internes
 
 ### 4.1 Sortie getRawData
@@ -306,6 +326,15 @@ Reference code:
 - src/mqttService.js (loadMidnightReferencesFromDisk / saveMidnightReferencesToDisk)
 
 ## 6. Integration du tableau electrique deporte
+
+### 6.0 Topologie physique de l'installation
+
+Points cles de cette topologie (voir aussi 6.3 et 9.4):
+
+- Le sensor de **production** Envoy est place directement apres les panneaux: il mesure toute la production solaire, sans exception — fiable, jamais besoin de correction.
+- Le sensor **net-consumption** Envoy est place entre la maison et le reseau: il voit tout ce que la maison importe/exporte, mais **pas** ce qui se passe sur le tableau ext (aveugle a cette branche, comme s'il n'existait pas).
+- Le **tableau ext** a son propre sensor (puissance + index cumule), place en amont de la borne de recharge voiture. Il peut consommer du solaire (branche sur le meme bus de production, avant le sensor net-consumption) aussi bien que du reseau, sans que ni le sensor de production ni le sensor net-consumption ne le voient directement.
+- Consequence pratique: la consommation du tableau ext (`tableau_elec_whOffset`, alias `energyOffsetWh`) doit etre reintegree manuellement dans les calculs de conso/export/import — voir 6.3 et 9.4.
 
 Configuration:
 
@@ -480,14 +509,100 @@ Reference code:
 
 - src/ha/energySensors.js:42
 
-## 9. Cas limites et garanties
+## 9. Reference complete des champs produits
+
+Tableau de tous les champs publies sous `topicData` (`base/serial/data/*`), avec leur origine technique (endpoint + champ brut) ou le calcul qui les produit, et leur description. "Corrige" signifie: apres application de la correction tableau elec (`signedPowerW`/`energyOffsetWh`, nulle si tableau elec desactive — voir 6.3).
+
+### 9.1 Production
+
+| Champ | Origine / Calcul | Description |
+|---|---|---|
+| `prod_eim_wNow` | `/ivp/meters/readings`, compteur `production`, `instantaneousDemand` | Puissance instantanee produite par les panneaux (W) |
+| `prod_eim_wNow_binary` | Calcule: `1` si `prod_eim_wNow > 5` sinon `0` | Indicateur binaire "production active" (seuil de 5W pour ignorer le bruit de mesure nocturne) |
+| `prod_eim_voltage` | `/ivp/meters/readings`, compteur `production`, `voltage` | Tension mesuree cote production (V) |
+| `prod_eim_current` | `/ivp/meters/readings`, compteur `production`, `current` | Courant mesure cote production (A) |
+| `prod_eim_pwrFactor` | `/ivp/meters/readings`, compteur `production`, `pwrFactor` | Facteur de puissance cote production |
+| `prod_eim_whLifetime` | `/ivp/meters/readings`, compteur `production`, `actEnergyDlvd` | Energie produite cumulee depuis l'installation (Wh) — fiable, non affectee par le tableau ext |
+| `prod_eim_kwhLifetime` | Calcule: `prod_eim_whLifetime / 1000` | Idem en kWh |
+| `prod_eim_wattHoursToday` | `/api/v1/production`, `wattHoursToday` | Energie produite depuis minuit selon l'Envoy lui-meme (indicatif, non utilise dans les calculs de `*_today`, voir 3.5) |
+| `prod_eim_today` | Calcule, voir 9.5 | Production depuis minuit (Wh), calcul interne |
+| `prod_eim_yesterday` | Calcule, voir 9.5 | Production de la veille (Wh) |
+
+### 9.2 Consommation nette (net-consumption)
+
+| Champ | Origine / Calcul | Description |
+|---|---|---|
+| `conso_net_eim_wNow` | `/ivp/meters/readings`, compteur `net-consumption`, `instantaneousDemand`, corrige (`+= signedPowerW`) | Bilan de puissance net instantane (W): positif = import du reseau, negatif = export vers le reseau |
+| `conso_net_eim_voltage` | `/ivp/meters/readings`, compteur `net-consumption`, `voltage` | Tension mesuree cote compteur net |
+| `conso_net_eim_current` | Calcule: `I = P / U` a partir de `conso_net_eim_wNow` corrige et `conso_net_eim_voltage` | Courant recalcule (le champ brut `current` du compteur net-consumption est ecrase par ce recalcul) |
+| `conso_net_eim_pwrFactor` | `/ivp/meters/readings`, compteur `net-consumption`, `pwrFactor` | Facteur de puissance cote compteur net |
+| `conso_net_eim_whLifetime` | `/ivp/meters/reports/consumption`, reportType `net-consumption`, `whDlvdCum`, corrige (`+= energyOffsetWh`) | Solde net cumule depuis l'installation (Wh); peut monter **et** descendre selon la balance prod/conso (voir 3.5, 9.6) |
+| `conso_net_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+
+### 9.3 Consommation totale (total-consumption)
+
+| Champ | Origine / Calcul | Description |
+|---|---|---|
+| `conso_all_eim_wNow` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `currW`, corrige (`+= signedPowerW`) | Puissance totale consommee par le foyer, tous circuits vus par l'Envoy (W) |
+| `conso_all_eim_rmsCurrent` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `rmsCurrent` | Courant RMS cote consommation totale (A) |
+| `conso_all_eim_rmsVoltage` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `rmsVoltage` | Tension RMS cote consommation totale (V) |
+| `conso_all_eim_whLifetime` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `whDlvdCum`, corrige (`+= energyOffsetWh`) | Energie totale consommee cumulee depuis l'installation (Wh) |
+| `conso_all_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+
+### 9.4 Import / export / economie (derives du compteur net-consumption)
+
+| Champ | Origine / Calcul | Description |
+|---|---|---|
+| `import_eim_whLifetime` | `/ivp/meters/readings`, compteur `net-consumption`, `actEnergyRcvd`, corrige (`+= energyOffsetWh`, clampe a 0) | Energie importee cumulee depuis le reseau (Wh) |
+| `import_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+| `grid_eim_whLifetime` | `/ivp/meters/readings`, compteur `net-consumption`, `actEnergyDlvd`, corrige (`-= energyOffsetWh`, clampe a 0) | Energie exportee cumulee vers le reseau (Wh) ("to_grid") |
+| `grid_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+| `grid_eim_wNow` | Calcule: `abs(conso_net_eim_wNow corrige)` si negatif, sinon `0` | Puissance exportee instantanee (W) |
+| `grid_eim_wNow_binary` | Calcule: `1` si `conso_net_eim_wNow` corrige `> 0` (import), sinon `0` | Indicateur binaire "en import" a l'instant T |
+| `eco_eim_wNow` | Calcule: `prod_eim_wNow + conso_net_eim_wNow corrige` si ce dernier est negatif, sinon `prod_eim_wNow` | Puissance instantanee autoconsommee grace au solaire (W) |
+| `eco_eim_whLifetime` | Calcule: `max(0, prod_eim_whLifetime - grid_eim_whLifetime corrige)` | Energie autoconsommee cumulee (Wh). Toujours `<= prod_eim_whLifetime` par construction |
+| `eco_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+
+### 9.5 Journalier (`_today` / `_yesterday` / `_00h`)
+
+Applicable a chaque capteur de `dailySensors`: `conso_all_eim`, `conso_net_eim`, `prod_eim`, `grid_eim`, `eco_eim` (au niveau `whLifetime`).
+
+| Champ | Origine / Calcul | Description |
+|---|---|---|
+| `<capteur>_today` | Calcule: `max(0, round(whLifetime actuel - reference _00h))` | Valeur cumulee depuis minuit, heure locale (`timezone.name`) |
+| `<capteur>_yesterday` | Calcule: valeur de `<capteur>_today` figee au moment du dernier changement de jour detecte (rollover) | Valeur de la veille, mise a jour une fois par jour au rollover, stable le reste du temps |
+| `<capteur>_whLifetime_00h` (topic technique, retained) | Recopie de la reference interne `midnightReferences[<capteur>]` | Reference whLifetime prise a minuit, utilisee en interne pour calculer `*_today`; publiee pour debug/HA, pas un calcul en soi |
+
+### 9.6 Tableau elec deporte (si active)
+
+| Champ | Origine / Calcul | Description |
+|---|---|---|
+| `tableau_elec_wNow` | Calcule: dernier `currentPowerW` recu par MQTT du capteur externe, x `sign` (config) | Puissance instantanee du tableau elec deporte (W), signee selon la config |
+| `tableau_elec_whOffset` | Calcule: `energyFromIndexWh` (cumul differentiel de l'index du capteur externe x `sign`) | Decalage d'energie (`energyOffsetWh`) utilise pour corriger conso/grid/import (Wh) |
+
+### 9.7 Divers / technique
+
+| Champ | Origine / Calcul | Description |
+|---|---|---|
+| `timestamp` | Calcule: `Math.floor(Date.now() / 1000)` au moment de l'appel | Horodatage Unix (s) de la lecture |
+| `timestamp_text` | Calcule: `isoNowSeconds()` | Horodatage ISO 8601 (lisible) de la lecture |
+| `last_midnight_check` (topic technique, retained) | Recopie de `this.lastMidnightCheck` | Dernier jour (`YYYY-MM-DD`) pour lequel le rollover minuit a ete effectue. Debug uniquement — la restauration au demarrage se fait depuis le fichier local, pas ce topic (voir 5.2) |
+
+### 9.8 Capteurs JSON dedies (topics separes)
+
+Repackagent des champs deja documentes ci-dessus, sans nouveau calcul — voir `src/ha/energySensors.js`:
+
+- Topic `pv_production`: `energy` (= `prod_eim_kwhLifetime`), `power` (= `prod_eim_wNow`), `facteur_de_puiss` (= `prod_eim_pwrFactor`), `voltage` (= `prod_eim_voltage`), `current` (= `prod_eim_current`)
+- Topic `conso_net`: `energy` (= `conso_net_eim_kwhLifetime`), `energy_flow` (`"consuming"`/`"producing"` selon le signe de `conso_net_eim_wNow`), `power_cons` (= `max(0, conso_net_eim_wNow)`), `power` (= `conso_net_eim_wNow`), `facteur_de_puiss`, `voltage`, `current`
+
+## 10. Cas limites et garanties
 
 - Si index_field absent: correction energie externe desactivee (offset = 0)
 - Si index recule fortement (delta < -1 Wh): reset non committe immediatement, mis en attente de confirmation sur 3 lectures consecutives coherentes (voir 6.3) — protege contre un payload glitché (null/0) isole
 - Si erreur endpoint: la boucle continue, warning logge
 - Si token expire/401: reauth + retry automatique
 
-## 10. Checklist d integration Docusaurus
+## 11. Checklist d integration Docusaurus
 
 1. Conserver le frontmatter du fichier.
 2. Ajouter ce document dans la sidebar Docusaurus.
