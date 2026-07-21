@@ -43,6 +43,7 @@ export class EnvoyMqttService {
     this.serial = this.config.serialNumber;
     this.topicRaw = `${this.baseTopic}/${this.serial}/raw`;
     this.topicData = `${this.baseTopic}/${this.serial}/data`;
+    this.topicDebug = `${this.baseTopic}/${this.serial}/debug`;
 
     this.dailySensors = [
       "conso_all_eim_whLifetime",
@@ -74,6 +75,9 @@ export class EnvoyMqttService {
         pendingResetIndexWh: undefined,
         pendingResetLastSeenWh: undefined,
         pendingResetCount: 0,
+        // Dernier payload brut recu du capteur externe (avant parsing), pour
+        // publication en mode debug (voir publishDebugPayloads). Non persisté.
+        lastRawPayload: undefined,
       },
       // Bookkeeping en memoire uniquement (non persisté sur disque) pour le
       // throttle des sauvegardes non critiques.
@@ -455,6 +459,8 @@ export class EnvoyMqttService {
       const payload = payloadBuf.toString();
 
       if (this.tableauElec.enabled && this.tableauElec.topic && topic === this.tableauElec.topic) {
+        this.tableauElec.state.lastRawPayload = payload;
+
         const { powerW, indexWh } = this.parseTableauElecPayload(payload);
         if (!Number.isFinite(powerW) && !Number.isFinite(indexWh)) return;
 
@@ -523,6 +529,7 @@ export class EnvoyMqttService {
       const start = Date.now();
       try {
         const fullData = await this.getCorrectedFullData();
+        await this.publishDebugPayloads();
         await this.initializeMissingReferences(fullData);
         await this.checkAndUpdateMidnightReferences(fullData);
 
@@ -597,6 +604,34 @@ export class EnvoyMqttService {
 
   async publishStatus(status) {
     await this.publish(`${this.baseTopic}/${this.serial}/lwt`, status, { retain: true });
+  }
+
+  // Republie le dernier payload brut de chaque endpoint Envoy (avant tout
+  // renommage/calcul) et du capteur tableau ext, un sous-topic par source, pour
+  // faciliter le debug sans avoir a activer un sniffer HTTP/MQTT externe.
+  // Actif uniquement si logging.level (ou LOG_LEVEL) vaut "debug".
+  async publishDebugPayloads() {
+    if (this.log.level !== "debug") return;
+
+    const raw = this.api.lastRawPayloads ?? {};
+    const entries = [
+      ["meters_info", raw.metersInfo],
+      ["meters_readings", raw.metersReadings],
+      ["consumption_reports", raw.consumptionReports],
+      ["production_v1", raw.productionV1],
+    ];
+
+    for (const [suffix, value] of entries) {
+      if (value === undefined) continue;
+      await this.publish(`${this.topicDebug}/${suffix}`, JSON.stringify(value), { retain: true, debug: false });
+    }
+
+    if (this.tableauElec.enabled) {
+      const tableauPayload = this.tableauElec.state.lastRawPayload;
+      if (tableauPayload !== undefined) {
+        await this.publish(`${this.topicDebug}/tableau_ext`, tableauPayload, { retain: true, debug: false });
+      }
+    }
   }
 
   async initializeMissingReferences(currentData) {

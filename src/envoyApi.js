@@ -50,6 +50,15 @@ export class EnvoyApi {
     this.authenticatingPromise = undefined;
     this.authFailureCount = 0;
     this.authBackoffUntil = 0;
+
+    // Dernier payload brut recu par endpoint (avant tout renommage/calcul), pour
+    // publication en mode debug (voir EnvoyMqttService.publishDebugPayloads).
+    this.lastRawPayloads = {
+      metersInfo: undefined,
+      metersReadings: undefined,
+      consumptionReports: undefined,
+      productionV1: undefined,
+    };
   }
 
   get isTokenValid() {
@@ -298,6 +307,7 @@ export class EnvoyApi {
     }
 
     const metersInfo = await this.makeRequest("/ivp/meters", { debug });
+    this.lastRawPayloads.metersInfo = metersInfo;
     const eidMapping = {};
 
     if (Array.isArray(metersInfo)) {
@@ -323,6 +333,7 @@ export class EnvoyApi {
       this.makeRequest("/ivp/meters/readings", { debug }),
     ]);
     if (debug !== false) this.log.debug("getMetersReadings: terminé (parallèle)", { durationMs: Date.now() - startedAt });
+    this.lastRawPayloads.metersReadings = metersReadings;
     if (!metersInfo || Object.keys(metersInfo).length === 0) return {};
 
     const processed = {};
@@ -342,6 +353,7 @@ export class EnvoyApi {
 
   async getConsumptionReports({ debug } = {}) {
     const consumptionReports = await this.makeRequest("/ivp/meters/reports/consumption", { debug });
+    this.lastRawPayloads.consumptionReports = consumptionReports;
 
     const reports = {};
     if (Array.isArray(consumptionReports)) {
@@ -359,6 +371,7 @@ export class EnvoyApi {
 
   async getProductionV1({ debug } = {}) {
     const data = await this.makeRequest("/api/v1/production", { debug });
+    this.lastRawPayloads.productionV1 = data;
     return data && typeof data === "object" && !Array.isArray(data) ? data : {};
   }
 

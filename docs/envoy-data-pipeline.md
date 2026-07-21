@@ -509,6 +509,23 @@ Reference code:
 
 - src/ha/energySensors.js:42
 
+### 8.5 Donnees debug (mode debug uniquement)
+
+Actif seulement si `logging.level` (ou `LOG_LEVEL`) vaut `debug`. A chaque cycle de la boucle full, republie le dernier payload brut de chaque endpoint Envoy (avant tout renommage/calcul par `getAllEnvoyData()`, voir 3.x), sur un sous-topic distinct par source — pratique pour inspecter la reponse exacte de l'Envoy sans sniffer HTTP/MQTT externe:
+
+- base/serial/debug/meters_info (retained) — reponse brute de `/ivp/meters` (voir 3.1)
+- base/serial/debug/meters_readings (retained) — reponse brute de `/ivp/meters/readings` (voir 3.2)
+- base/serial/debug/consumption_reports (retained) — reponse brute de `/ivp/meters/reports/consumption` (voir 3.3)
+- base/serial/debug/production_v1 (retained) — reponse brute de `/api/v1/production` (voir 3.4)
+- base/serial/debug/tableau_ext (retained, uniquement si tableau_elec active) — dernier payload MQTT brut recu du capteur externe, tel quel (avant `parseTableauElecPayload()`, voir 6.1)
+
+`meters_info` ne change qu'au rythme du cache (`EnvoyApi.METERS_INFO_CACHE_TTL_MS`, 6h par defaut — voir 3.1): la valeur republiee peut donc etre agee de plusieurs heures, ce n'est pas un payload frais a chaque cycle. `tableau_ext` n'est publie que si un payload a deja ete recu au moins une fois depuis le demarrage du service.
+
+Reference code:
+
+- src/envoyApi.js:294-363 (capture de `lastRawPayloads` dans getMetersInfo/getMetersReadings/getConsumptionReports/getProductionV1)
+- src/mqttService.js:613 (publishDebugPayloads)
+
 ## 9. Reference complete des champs produits
 
 Tableau de tous les champs publies sous `topicData` (`base/serial/data/*`), avec leur origine technique (endpoint + champ brut) ou le calcul qui les produit, et leur description. "Corrige" signifie: apres application de la correction tableau elec (`signedPowerW`/`energyOffsetWh`, nulle si tableau elec desactive — voir 6.3).
