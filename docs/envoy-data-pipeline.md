@@ -206,8 +206,8 @@ Definitions telles que documentees par l'API Envoy (endpoints ci-dessus), avant 
 - **reportType**: equivalent de `measurementType` mais pour `/ivp/meters/reports/consumption` (`total-consumption` ou `net-consumption`).
 - **instantaneousDemand**: puissance instantanee mesuree par le compteur (W). Pour le compteur bidirectionnel `net-consumption`: negative quand le foyer exporte plus qu'il n'importe a l'instant T, positive quand il importe net.
 - **voltage** / **current** / **pwrFactor**: tension (V), courant (A) et facteur de puissance instantanes mesures par le compteur, sur `/ivp/meters/readings`.
-- **actEnergyDlvd** ("The active energy delivered on this channel"): energie active cumulee **delivree** par ce canal depuis la mise en service. Sur le compteur `production`: production totale (lifetime). Sur le compteur `net-consumption`: energie totale delivree **au** reseau, c'est-a-dire l'**export** cumule.
-- **actEnergyRcvd** ("The active energy received on this channel"): energie active cumulee **recue** par ce canal. Present uniquement sur le compteur `net-consumption`: energie totale recue **du** reseau, c'est-a-dire l'**import** cumule.
+- **actEnergyDlvd** ("The active energy delivered on this channel"): energie active cumulee **delivree** par ce canal depuis la mise en service. Sur le compteur `production`: production totale (lifetime), point de vue des panneaux — sans ambiguite. Sur le compteur `net-consumption`, ces deux champs sont definis du point de vue du **reseau** (pas de la maison): `actEnergyDlvd` = energie delivree **par le reseau** (donc **import**). Confirme empiriquement (voir 9.4): valeur proche de l'"Importe" lifetime affiche par Enlighten.
+- **actEnergyRcvd** ("The active energy received on this channel"): sur le compteur `net-consumption`, energie **recue par le reseau** (donc **export**). Confirme empiriquement: valeur proche de l'"Exporte" lifetime affiche par Enlighten. Attention, ce n'est pas le sens intuitif "recu/delivre par la maison" — c'est bien le reseau qui est le sujet de ces deux verbes ici.
 - **currW** / **rmsCurrent** / **rmsVoltage**: puissance instantanee (W) et valeurs RMS de courant/tension, retournees par `/ivp/meters/reports/consumption` (endpoint distinct de `/ivp/meters/readings`, dedie aux rapports de consommation).
 - **whDlvdCum**: cumul d'energie "delivree" (Wh) tel que retourne par `/ivp/meters/reports/consumption`. Pour `total-consumption`: consommation totale du foyer (tous circuits vus par l'Envoy). Pour `net-consumption`: solde net cumule, qui peut **monter et descendre** selon la balance production/consommation du moment (voir 6.3 et 9).
 - **wattHoursToday**: energie produite depuis minuit (Wh) telle que calculee par l'Envoy lui-meme, sur `/api/v1/production`. Republiee telle quelle en `prod_eim_wattHoursToday`, non utilisee pour le calcul interne de `*_today` (voir 5.2, qui recalcule sa propre valeur depuis les references `_00h`).
@@ -434,7 +434,7 @@ Correction energie cumulative (Wh) via index differentiel uniquement:
 - eco_eim_whLifetime = prod_eim_whLifetime - grid_eim_whLifetime_corrige
 - eco_eim_kwhLifetime = prod_eim_kwhLifetime - grid_eim_kwhLifetime_corrige
 
-`grid_eim_whLifetime` (mappe depuis `actEnergyDlvd` du compteur net-consumption, cf. 3.2) represente l'energie **exportee** vers le reseau, et `import_eim_whLifetime` (mappe depuis `actEnergyRcvd`) l'energie **importee**. Le tableau ext peut consommer du solaire sans que la pince du compteur net-consumption ne le voie: sa consommation reduit d'autant ce qui a reellement ete exporte (soustraction) et augmente d'autant ce qui a reellement du etre importe (addition) — les deux corrections sont symetriques, dans le sens oppose l'une de l'autre.
+`grid_eim_whLifetime` (mappe depuis `actEnergyRcvd` du compteur net-consumption, cf. 3.2 et 3.5 — recu **par le reseau**, donc export) represente l'energie **exportee** vers le reseau, et `import_eim_whLifetime` (mappe depuis `actEnergyDlvd`, delivre **par le reseau**, donc import) l'energie **importee**. Le tableau ext peut consommer du solaire sans que la pince du compteur net-consumption ne le voie: sa consommation reduit d'autant ce qui a reellement ete exporte (soustraction) et augmente d'autant ce qui a reellement du etre importe (addition) — les deux corrections sont symetriques, dans le sens oppose l'une de l'autre.
 
 Impact sur les calculs journaliers:
 
@@ -553,9 +553,9 @@ Tableau de tous les champs publies sous `topicData` (`base/serial/data/*`), avec
 
 | Champ | Origine / Calcul | Description |
 |---|---|---|
-| `import_eim_whLifetime` | `/ivp/meters/readings`, compteur `net-consumption`, `actEnergyRcvd`, corrige (`+= energyOffsetWh`, clampe a 0) | Energie importee cumulee depuis le reseau (Wh) |
+| `import_eim_whLifetime` | `/ivp/meters/readings`, compteur `net-consumption`, `actEnergyDlvd`, corrige (`+= energyOffsetWh`, clampe a 0) | Energie importee cumulee depuis le reseau (Wh) |
 | `import_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
-| `grid_eim_whLifetime` | `/ivp/meters/readings`, compteur `net-consumption`, `actEnergyDlvd`, corrige (`-= energyOffsetWh`, clampe a 0) | Energie exportee cumulee vers le reseau (Wh) ("to_grid") |
+| `grid_eim_whLifetime` | `/ivp/meters/readings`, compteur `net-consumption`, `actEnergyRcvd`, corrige (`-= energyOffsetWh`, clampe a 0) | Energie exportee cumulee vers le reseau (Wh) ("to_grid") |
 | `grid_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
 | `grid_eim_wNow` | Calcule: `abs(conso_net_eim_wNow corrige)` si negatif, sinon `0` | Puissance exportee instantanee (W) |
 | `grid_eim_wNow_binary` | Calcule: `1` si `conso_net_eim_wNow` corrige `> 0` (import), sinon `0` | Indicateur binaire "en import" a l'instant T |

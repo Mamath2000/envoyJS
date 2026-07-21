@@ -439,11 +439,13 @@ export class EnvoyApi {
       voltage: "conso_net_eim_voltage",
       current: "conso_net_eim_current",
       pwrFactor: "conso_net_eim_pwrFactor",
-      // actEnergyRcvd = energie recue du reseau (import), actEnergyDlvd = energie
-      // livree au reseau (export) — cf. doc Envoy. grid_eim doit representer
-      // l'export (coherent avec son usage au niveau wNow et dans le calcul d'eco).
-      actEnergyRcvd: "import_eim_whLifetime",
-      actEnergyDlvd: "grid_eim_whLifetime",
+      // Sur le compteur net-consumption, actEnergyDlvd/actEnergyRcvd sont definis
+      // du point de vue du RESEAU (pas de la maison): actEnergyDlvd = delivre PAR
+      // le reseau (donc import), actEnergyRcvd = recu PAR le reseau (donc export).
+      // Confirme empiriquement: actEnergyDlvd ~38 MWh (proche de l'Importe lifetime
+      // Enlighten), actEnergyRcvd ~2,5 MWh (proche de l'Exporte lifetime).
+      actEnergyRcvd: "grid_eim_whLifetime",
+      actEnergyDlvd: "import_eim_whLifetime",
     };
 
     const processed = {};
@@ -452,8 +454,8 @@ export class EnvoyApi {
       if (!renameMapping[key]) continue;
 
       processed[renameMapping[key]] = value;
-      if (key === "actEnergyRcvd") processed.import_eim_kwhLifetime = Number((value / 1000).toFixed(3));
-      if (key === "actEnergyDlvd") processed.grid_eim_kwhLifetime = Number((value / 1000).toFixed(3));
+      if (key === "actEnergyRcvd") processed.grid_eim_kwhLifetime = Number((value / 1000).toFixed(3));
+      if (key === "actEnergyDlvd") processed.import_eim_kwhLifetime = Number((value / 1000).toFixed(3));
     }
     return processed;
   }
