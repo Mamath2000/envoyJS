@@ -47,6 +47,18 @@ test("deriveEnvoyFields avec correction positive decale la puissance et l'energi
   assert.equal(out.eco_eim_whLifetime, 8_000);
 });
 
+test("deriveEnvoyFields augmente import_eim de l'offset tableau ext (sens oppose de grid_eim)", () => {
+  const base = {
+    import_eim_whLifetime: 3_000,
+    import_eim_kwhLifetime: 3,
+  };
+
+  const out = deriveEnvoyFields(base, { signedPowerW: 0, energyOffsetWh: 1_000 });
+
+  assert.equal(out.import_eim_whLifetime, 4_000);
+  assert.equal(out.import_eim_kwhLifetime, 4);
+});
+
 test("deriveEnvoyFields clampe a 0 quand l'offset depasse le grid_eim_whLifetime", () => {
   const base = {
     conso_net_eim_wNow: 100,

@@ -67,6 +67,18 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
     adjusted.grid_eim_kwhLifetime = Math.max(0, Number((baseGridKwhLifetime - energyOffsetWh / 1000).toFixed(3)));
   }
 
+  // import (tire du reseau) augmente quand la conso externe augmente: ce qu'elle
+  // consomme sans venir du solaire a bien fallu le tirer du reseau.
+  const baseImportWhLifetime = Number(adjusted.import_eim_whLifetime);
+  if (Number.isFinite(baseImportWhLifetime)) {
+    adjusted.import_eim_whLifetime = Math.max(0, Math.round(baseImportWhLifetime + energyOffsetWh));
+  }
+
+  const baseImportKwhLifetime = Number(adjusted.import_eim_kwhLifetime);
+  if (Number.isFinite(baseImportKwhLifetime)) {
+    adjusted.import_eim_kwhLifetime = Math.max(0, Number((baseImportKwhLifetime + energyOffsetWh / 1000).toFixed(3)));
+  }
+
   // economie = production - to_grid
   const prodWhLifetime = Number(adjusted.prod_eim_whLifetime);
   const gridWhLifetime = Number(adjusted.grid_eim_whLifetime);

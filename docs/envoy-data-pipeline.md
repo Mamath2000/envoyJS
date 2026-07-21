@@ -400,8 +400,12 @@ Correction energie cumulative (Wh) via index differentiel uniquement:
 - conso_all_eim_kwhLifetime = conso_all_eim_kwhLifetime_envoy + energyOffsetWh / 1000
 - grid_eim_whLifetime = grid_eim_whLifetime_envoy - energyOffsetWh
 - grid_eim_kwhLifetime = grid_eim_kwhLifetime_envoy - energyOffsetWh / 1000
+- import_eim_whLifetime = import_eim_whLifetime_envoy + energyOffsetWh
+- import_eim_kwhLifetime = import_eim_kwhLifetime_envoy + energyOffsetWh / 1000
 - eco_eim_whLifetime = prod_eim_whLifetime - grid_eim_whLifetime_corrige
 - eco_eim_kwhLifetime = prod_eim_kwhLifetime - grid_eim_kwhLifetime_corrige
+
+`grid_eim_whLifetime` (mappe depuis `actEnergyDlvd` du compteur net-consumption, cf. 3.2) represente l'energie **exportee** vers le reseau, et `import_eim_whLifetime` (mappe depuis `actEnergyRcvd`) l'energie **importee**. Le tableau ext peut consommer du solaire sans que la pince du compteur net-consumption ne le voie: sa consommation reduit d'autant ce qui a reellement ete exporte (soustraction) et augmente d'autant ce qui a reellement du etre importe (addition) — les deux corrections sont symetriques, dans le sens oppose l'une de l'autre.
 
 Impact sur les calculs journaliers:
 
