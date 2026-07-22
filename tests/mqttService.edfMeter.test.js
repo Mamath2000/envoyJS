@@ -15,14 +15,13 @@ function createSilentLog() {
   };
 }
 
-function createService({ enabled = true } = {}) {
+function createService() {
   const service = new EnvoyMqttService({
     config: {
       mqttBaseTopic: "envoy",
       serialNumber: "123456789",
       timeZoneName: "Europe/Paris",
       haAutodiscovery: false,
-      edfMeterEnabled: enabled,
       edfMeterTopic: "teleinfo/022061153159",
       edfMeterIndexField: "EAST.value",
     },
@@ -68,7 +67,7 @@ test("updateEdfMeterImport ignore un payload illisible sans planter", () => {
   assert.equal(service.edfMeter.state.lastImportWh, undefined);
 });
 
-test("getExternalCorrections expose edfImportWhLifetime quand actif", () => {
+test("getExternalCorrections expose edfImportWhLifetime", () => {
   const service = createService();
   service.edfMeter.state.lastImportWh = 12_345;
 
@@ -77,16 +76,7 @@ test("getExternalCorrections expose edfImportWhLifetime quand actif", () => {
   assert.equal(correction.edfImportWhLifetime, 12_345);
 });
 
-test("getExternalCorrections n'expose pas edfImportWhLifetime quand desactive", () => {
-  const service = createService({ enabled: false });
-  service.edfMeter.state.lastImportWh = 12_345; // ne devrait jamais arriver en pratique, mais on verifie le garde-fou
-
-  const correction = service.getExternalCorrections();
-
-  assert.equal(correction.edfImportWhLifetime, undefined);
-});
-
-test("deriveFullData integre edf_import/eco_edf/togrid_edf via getExternalCorrections", () => {
+test("deriveFullData integre edf_import/eco/grid via getExternalCorrections", () => {
   const service = createService();
   service.edfMeter.state.lastImportWh = 15_000;
 
@@ -96,14 +86,14 @@ test("deriveFullData integre edf_import/eco_edf/togrid_edf via getExternalCorrec
   });
 
   assert.equal(out.edf_import_whLifetime, 15_000);
-  assert.equal(out.eco_edf_whLifetime, 5_000);
-  assert.equal(out.togrid_edf_whLifetime, 7_000);
+  assert.equal(out["eco/whLifetime"], 5_000);
+  assert.equal(out["grid/whLifetime"], 7_000);
 });
 
-test("dailySensors inclut bien les nouveaux capteurs EDF pour le rollover _00h/_today/_yesterday", () => {
+test("dailySensors inclut bien edf_import/eco/grid pour le rollover _00h/_today/_yesterday", () => {
   const service = createService();
 
   assert.ok(service.dailySensors.includes("edf_import_whLifetime"));
-  assert.ok(service.dailySensors.includes("eco_edf_whLifetime"));
-  assert.ok(service.dailySensors.includes("togrid_edf_whLifetime"));
+  assert.ok(service.dailySensors.includes("eco/whLifetime"));
+  assert.ok(service.dailySensors.includes("grid/whLifetime"));
 });

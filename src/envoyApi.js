@@ -449,12 +449,12 @@ export class EnvoyApi {
       instantaneousDemand: "conso_net/wNow",
       voltage: "conso_net/voltage",
       current: "conso_net/current",
-      // Sur le compteur net-consumption, actEnergyDlvd/actEnergyRcvd sont definis
-      // du point de vue du RESEAU (pas de la maison): actEnergyDlvd = delivre PAR
-      // le reseau (donc import), actEnergyRcvd = recu PAR le reseau (donc export).
-      // Confirme empiriquement: actEnergyDlvd ~38 MWh (proche de l'Importe lifetime
-      // Enlighten), actEnergyRcvd ~2,5 MWh (proche de l'Exporte lifetime).
-      actEnergyRcvd: "grid_eim_whLifetime",
+      // Sur le compteur net-consumption, actEnergyDlvd est defini du point de vue
+      // du RESEAU (pas de la maison): delivre PAR le reseau, donc import. Confirme
+      // empiriquement: ~38 MWh, proche de l'Importe lifetime Enlighten.
+      // actEnergyRcvd (recu par le reseau, donc export) n'est plus mappe: grid
+      // (export) est desormais deduit du compteur EDF par conservation d'energie
+      // (voir envoyDerivedFields.js), plus fiable en presence du tableau ext.
       actEnergyDlvd: "import_eim_whLifetime",
     };
 

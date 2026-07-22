@@ -85,8 +85,8 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
       "conso_all/whLifetime": 1000,
       "conso_net/whLifetime": 500,
       "prod/whLifetime": 2000,
-      grid_eim_whLifetime: 300,
-      eco_eim_whLifetime: 700,
+      "grid/whLifetime": 300,
+      "eco/whLifetime": 700,
     };
 
     // Demarrage du service en milieu de journee: seed sans rollover.
@@ -100,8 +100,8 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
       "conso_all/whLifetime": 1800,
       "conso_net/whLifetime": 900,
       "prod/whLifetime": 3000,
-      grid_eim_whLifetime: 450,
-      eco_eim_whLifetime: 1100,
+      "grid/whLifetime": 450,
+      "eco/whLifetime": 1100,
     };
 
     await service.checkAndUpdateMidnightReferences(currentData);
@@ -112,8 +112,8 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
     assert.equal(service.midnightReferences["conso_all/yesterday"], 800); // 1800-1000
     assert.equal(service.midnightReferences["conso_net/yesterday"], 400); // 900-500
     assert.equal(service.midnightReferences["prod/yesterday"], 1000); // 3000-2000
-    assert.equal(service.midnightReferences.grid_eim_yesterday, 150); // 450-300
-    assert.equal(service.midnightReferences.eco_eim_yesterday, 400); // 1100-700
+    assert.equal(service.midnightReferences["grid/yesterday"], 150); // 450-300
+    assert.equal(service.midnightReferences["eco/yesterday"], 400); // 1100-700
 
     // Nouvelle reference _00h = valeur courante au moment de la detection.
     assert.equal(service.midnightReferences["conso_all/whLifetime"], 1800);
@@ -146,34 +146,6 @@ test("les references minuit et le dernier jour de rollover sont restaurés depui
     assert.equal(service.lastMidnightCheck, "2026-07-19");
     assert.equal(service.midnightReferences["conso_all/whLifetime"], 1000);
     assert.equal(service.midnightReferences["prod/whLifetime"], 2000);
-  } finally {
-    fs.rmSync(stateFilePath, { force: true });
-  }
-});
-
-test("gridEimMonotonicWhLifetime n'est jamais seede depuis une reference _00h obsolete au demarrage", () => {
-  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
-
-  try {
-    // Simule une reference _00h obsolete (ex: capturee sous un ancien mapping de
-    // champs errone) — si elle etait utilisee pour seeder le clamp monotone, ce
-    // dernier resterait bloqué dessus indefiniment (incident reel du 2026-07-22).
-    fs.writeFileSync(
-      stateFilePath,
-      JSON.stringify({
-        midnightReferences: { grid_eim_whLifetime: 38_195_247 },
-        lastMidnightCheck: "2026-07-19",
-      }),
-    );
-
-    const { service } = createService({ midnightReferencesStateFile: stateFilePath });
-    service.loadMidnightReferencesFromDisk();
-
-    assert.equal(service.midnightReferences.grid_eim_whLifetime, 38_195_247); // charge normalement
-    assert.equal(service.gridEimMonotonicWhLifetime, undefined); // mais jamais utilise comme graine
-
-    const out = service.deriveFullData({ grid_eim_whLifetime: 2_400_000, "prod/whLifetime": 12_600_000 });
-    assert.equal(out.grid_eim_whLifetime, 2_400_000); // pas bloqué sur la vieille valeur obsolete
   } finally {
     fs.rmSync(stateFilePath, { force: true });
   }

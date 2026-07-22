@@ -23,12 +23,12 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
     const correctedNetPowerW = Math.round(baseNetPowerW + signedPowerW);
     adjusted["conso_net/wNow"] = correctedNetPowerW;
 
-    adjusted.grid_eim_wNow = correctedNetPowerW < 0 ? Math.abs(correctedNetPowerW) : 0;
-    adjusted.grid_eim_wNow_binary = correctedNetPowerW > 0 ? 1 : 0;
+    adjusted["grid/wNow"] = correctedNetPowerW < 0 ? Math.abs(correctedNetPowerW) : 0;
+    adjusted["grid/wNow_binary"] = correctedNetPowerW > 0 ? 1 : 0;
 
     const prodW = Number(adjusted["prod/wNow"]);
     if (Number.isFinite(prodW)) {
-      adjusted.eco_eim_wNow = correctedNetPowerW < 0 ? prodW + correctedNetPowerW : prodW;
+      adjusted["eco/wNow"] = correctedNetPowerW < 0 ? prodW + correctedNetPowerW : prodW;
     }
 
     // Coherence electrique demandee: I = P / U
@@ -54,22 +54,6 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
     adjusted["conso_all/whLifetime"] = Math.max(0, Math.round(baseAllWhLifetime + energyOffsetWh));
   }
 
-  // to_grid (export) est un cumul d'energie reellement injectee au reseau: ca ne
-  // peut physiquement jamais redescendre (si on importe, on n'exporte simplement
-  // pas — l'export ne "recule" pas pour autant). La soustraction de energyOffsetWh
-  // (qui ne fait qu'augmenter) peut faire chuter la valeur brute corrigee en
-  // dessous de ce qui a deja ete atteint: on clampe donc au plus haut jamais vu
-  // (previousGridEimWhLifetime, fourni par l'appelant qui persiste ce maximum
-  // d'un cycle a l'autre), pour garantir la monotonie.
-  const baseGridWhLifetime = Number(adjusted.grid_eim_whLifetime);
-  if (Number.isFinite(baseGridWhLifetime)) {
-    const correctedGridWhLifetime = Math.max(0, Math.round(baseGridWhLifetime - energyOffsetWh));
-    const previousGridWhLifetime = Number(correction.previousGridEimWhLifetime);
-    adjusted.grid_eim_whLifetime = Number.isFinite(previousGridWhLifetime)
-      ? Math.max(previousGridWhLifetime, correctedGridWhLifetime)
-      : correctedGridWhLifetime;
-  }
-
   // import (tire du reseau) augmente quand la conso externe augmente: ce qu'elle
   // consomme sans venir du solaire a bien fallu le tirer du reseau.
   const baseImportWhLifetime = Number(adjusted.import_eim_whLifetime);
@@ -77,20 +61,17 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
     adjusted.import_eim_whLifetime = Math.max(0, Math.round(baseImportWhLifetime + energyOffsetWh));
   }
 
-  // economie = production - to_grid
   const prodWhLifetime = Number(adjusted["prod/whLifetime"]);
-  const gridWhLifetime = Number(adjusted.grid_eim_whLifetime);
-  if (Number.isFinite(prodWhLifetime) && Number.isFinite(gridWhLifetime)) {
-    adjusted.eco_eim_whLifetime = Math.max(0, Math.round(prodWhLifetime - gridWhLifetime));
-  }
 
   // Compteur EDF (Linky, index EAST): situe avant la scission maison/tableau
   // ext, il voit deja le vrai import combine des deux reseaux — aucune
-  // correction a lui appliquer. On en deduit eco/to_grid par conservation
-  // d'energie ("ce qui est consomme = ce qui est importe + ce qui est
-  // autoconsomme"), une identite lineaire toujours vraie (contrairement a la
-  // correction grid_eim/tableau ext ci-dessus, qui dependait de quel reseau
-  // exportait/importait a quel instant — voir doc 6.3/6.4).
+  // correction a lui appliquer. On en deduit grid (export)/eco (autoconso) par
+  // conservation d'energie ("ce qui est consomme = ce qui est importe + ce qui
+  // est autoconsomme"), une identite lineaire toujours vraie — contrairement a
+  // l'ancienne approche basee sur le TOR (actEnergyRcvd), qui dependait de quel
+  // reseau exportait/importait a quel instant et necessitait un clamp monotone
+  // pour rester coherente en presence du tableau ext (retiree, voir historique
+  // 6.3/6.4 dans la doc).
   //
   // Pas de clamp a 0 ici, volontairement: conso_all/whLifetime et
   // edf_import_whLifetime ne partent pas du meme "zero" (le compteur Linky
@@ -100,20 +81,21 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
   // Ce qui compte, et qui reste correct malgre ce decalage arbitraire, c'est
   // le delta entre deux instants (_today/_yesterday, via _00h): ce decalage
   // s'annule dans la soustraction, et le delta est physiquement toujours >= 0
-  // (Δeco_edf(t) = Δconso_all(t) - Δedf_import(t) = autoconsommation reelle de
-  // l'instant >= 0). Un clamp a 0 ici ecraserait ce delta a chaque cycle des
-  // que le decalage d'origine est negatif, rendant _today/_yesterday
-  // definitivement bloques a 0 (incident reel observe le 2026-07-23).
+  // (Δeco(t) = Δconso_all(t) - Δedf_import(t) = autoconsommation reelle de
+  // l'instant >= 0, et par symetrie Δgrid(t) = Δprod(t) - Δeco(t) >= 0). Un
+  // clamp a 0 ici ecraserait ce delta a chaque cycle des que le decalage
+  // d'origine est negatif, rendant _today/_yesterday definitivement bloques a
+  // 0 (incident reel observe le 2026-07-23).
   const edfImportWhLifetime = Number(correction.edfImportWhLifetime);
   if (Number.isFinite(edfImportWhLifetime)) {
     adjusted.edf_import_whLifetime = Math.round(edfImportWhLifetime);
 
     const consoAllWhLifetime = Number(adjusted["conso_all/whLifetime"]);
     if (Number.isFinite(consoAllWhLifetime)) {
-      adjusted.eco_edf_whLifetime = Math.round(consoAllWhLifetime - edfImportWhLifetime);
+      adjusted["eco/whLifetime"] = Math.round(consoAllWhLifetime - edfImportWhLifetime);
 
       if (Number.isFinite(prodWhLifetime)) {
-        adjusted.togrid_edf_whLifetime = Math.round(prodWhLifetime - adjusted.eco_edf_whLifetime);
+        adjusted["grid/whLifetime"] = Math.round(prodWhLifetime - adjusted["eco/whLifetime"]);
       }
     }
   }

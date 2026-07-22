@@ -131,7 +131,6 @@ export function loadConfig() {
     tableauElecStateFile: String(cfg?.sensors?.tableau_elec?.state_file ?? "").trim() || undefined,
     tableauElecSign: Number(cfg?.sensors?.tableau_elec?.sign ?? 1),
 
-    edfMeterEnabled: Boolean(cfg?.sensors?.edf_meter?.enabled ?? false),
     edfMeterTopic: String(cfg?.sensors?.edf_meter?.topic ?? "").trim(),
     edfMeterIndexField: String(cfg?.sensors?.edf_meter?.index_field ?? "EAST.value").trim(),
 

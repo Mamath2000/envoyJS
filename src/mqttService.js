@@ -49,11 +49,9 @@ export class EnvoyMqttService {
       "conso_all/whLifetime",
       "conso_net/whLifetime",
       "prod/whLifetime",
-      "grid_eim_whLifetime",
-      "eco_eim_whLifetime",
       "edf_import_whLifetime",
-      "eco_edf_whLifetime",
-      "togrid_edf_whLifetime",
+      "eco/whLifetime",
+      "grid/whLifetime",
     ];
 
     this.midnightReferences = {};
@@ -62,20 +60,6 @@ export class EnvoyMqttService {
       this.config.midnightReferencesStateFile,
       "midnight-references-state.json",
     );
-
-    // Plus haute valeur jamais publiee pour grid_eim_whLifetime (voir
-    // deriveFullData/getExternalCorrections): garantit que ce cumul d'export ne
-    // redescend jamais, meme si la correction tableau elec le ferait chuter sous
-    // sa valeur precedente. grid_eim_kwhLifetime (sensor HA virtuel, voir
-    // src/device-def/sensors-def.json) en herite automatiquement puisqu'il lit
-    // ce meme topic Wh, pas besoin de le tracker separement.
-    // Volontairement PAS seede depuis le disque au demarrage: contrairement a
-    // _today/_yesterday (qui se corrigent au rollover suivant), ce clamp ne peut
-    // que monter, jamais redescendre — si la graine de depart est fausse (ex:
-    // reference _00h obsolete suite a un ancien bug de mapping), il reste bloque
-    // dessus indefiniment. On repart donc a chaque demarrage de la premiere
-    // valeur reellement recalculee (aucun risque d'empoisonnement).
-    this.gridEimMonotonicWhLifetime = undefined;
 
     this.tableauElec = {
       enabled: Boolean(this.config.tableauElecEnabled),
@@ -108,7 +92,6 @@ export class EnvoyMqttService {
     // remplace en pratique) — pas besoin de la machinerie anti-glitch complete
     // du tableau ext, juste ignorer une baisse isolee (frame teleinfo corrompu).
     this.edfMeter = {
-      enabled: Boolean(this.config.edfMeterEnabled),
       topic: this.config.edfMeterTopic,
       indexField: this.config.edfMeterIndexField,
       state: {
@@ -487,7 +470,7 @@ export class EnvoyMqttService {
       });
     }
 
-    if (this.edfMeter.enabled && this.edfMeter.topic) {
+    if (this.edfMeter.topic) {
       client.subscribe(this.edfMeter.topic);
       this.log.info("compteur EDF (teleinfo) activé", {
         topic: this.edfMeter.topic,
@@ -514,7 +497,7 @@ export class EnvoyMqttService {
         }
       }
 
-      if (this.edfMeter.enabled && this.edfMeter.topic && topic === this.edfMeter.topic) {
+      if (this.edfMeter.topic && topic === this.edfMeter.topic) {
         this.edfMeter.state.lastRawPayload = payload;
         this.updateEdfMeterImport(payload);
       }
@@ -703,11 +686,9 @@ export class EnvoyMqttService {
       }
     }
 
-    if (this.edfMeter.enabled) {
-      const edfPayload = this.edfMeter.state.lastRawPayload;
-      if (edfPayload !== undefined) {
-        await this.publish(`${this.topicDebug}/edf_meter`, edfPayload, { retain: true, debug: false });
-      }
+    const edfPayload = this.edfMeter.state.lastRawPayload;
+    if (edfPayload !== undefined) {
+      await this.publish(`${this.topicDebug}/edf_meter`, edfPayload, { retain: true, debug: false });
     }
   }
 
@@ -985,11 +966,10 @@ export class EnvoyMqttService {
   }
 
   getExternalCorrections() {
-    const previousGridEimWhLifetime = this.gridEimMonotonicWhLifetime;
-    const edfImportWhLifetime = this.edfMeter.enabled ? this.edfMeter.state.lastImportWh : undefined;
+    const edfImportWhLifetime = this.edfMeter.state.lastImportWh;
 
     if (!this.tableauElec.enabled) {
-      return { signedPowerW: 0, energyOffsetWh: 0, previousGridEimWhLifetime, edfImportWhLifetime };
+      return { signedPowerW: 0, energyOffsetWh: 0, edfImportWhLifetime };
     }
 
     const signedPowerW = this.tableauElec.state.currentPowerW * this.tableauElec.sign;
@@ -997,18 +977,12 @@ export class EnvoyMqttService {
       ? this.tableauElec.state.energyFromIndexWh
       : 0;
 
-    return { signedPowerW, energyOffsetWh, previousGridEimWhLifetime, edfImportWhLifetime };
+    return { signedPowerW, energyOffsetWh, edfImportWhLifetime };
   }
 
   deriveFullData(rawFields) {
     const correction = this.getExternalCorrections();
     const data = deriveEnvoyFields(rawFields, correction);
-
-    // grid_eim_whLifetime sort de deriveEnvoyFields deja clampe au plus haut
-    // jamais vu (voir envoyDerivedFields.js): on memorise ce nouveau maximum
-    // pour le prochain cycle, sinon la contrainte de monotonie n'aurait aucun
-    // effet d'un appel a l'autre.
-    if (Number.isFinite(data?.grid_eim_whLifetime)) this.gridEimMonotonicWhLifetime = data.grid_eim_whLifetime;
 
     if (this.tableauElec.enabled && data && typeof data === "object") {
       data.tableau_elec_wNow = Math.round(correction.signedPowerW);

@@ -37,7 +37,7 @@ function createService({ sign = 1 } = {}) {
   return service;
 }
 
-test("deriveFullData corrige to_grid et economie avec offset positif", () => {
+test("deriveFullData corrige conso_net/conso_all avec offset positif", () => {
   const service = createService({ sign: 1 });
   service.tableauElec.state.currentPowerW = 200;
   service.tableauElec.state.lastIndexWh = 1_000_000;
@@ -52,7 +52,6 @@ test("deriveFullData corrige to_grid et economie avec offset positif", () => {
     "conso_net/whLifetime": 10_000,
     "conso_all/whLifetime": 20_000,
 
-    grid_eim_whLifetime: 5_000,
     "prod/whLifetime": 12_000,
   };
 
@@ -63,13 +62,11 @@ test("deriveFullData corrige to_grid et economie avec offset positif", () => {
 
   assert.equal(out["conso_net/whLifetime"], 11_000);
   assert.equal(out["conso_all/whLifetime"], 21_000);
-  assert.equal(out.grid_eim_whLifetime, 4_000);
-  assert.equal(out.eco_eim_whLifetime, 8_000);
 
   assert.equal(out.tableau_elec_whOffset, 1_000);
 });
 
-test("deriveFullData corrige to_grid et economie avec offset negatif", () => {
+test("deriveFullData corrige conso_net/conso_all avec offset negatif", () => {
   const service = createService({ sign: 1 });
   service.tableauElec.state.currentPowerW = -100;
   service.tableauElec.state.lastIndexWh = 2_000_000;
@@ -84,7 +81,6 @@ test("deriveFullData corrige to_grid et economie avec offset negatif", () => {
     "conso_net/whLifetime": 10_000,
     "conso_all/whLifetime": 20_000,
 
-    grid_eim_whLifetime: 5_000,
     "prod/whLifetime": 12_000,
   };
 
@@ -95,36 +91,8 @@ test("deriveFullData corrige to_grid et economie avec offset negatif", () => {
 
   assert.equal(out["conso_net/whLifetime"], 9_200);
   assert.equal(out["conso_all/whLifetime"], 19_200);
-  assert.equal(out.grid_eim_whLifetime, 5_800);
-  assert.equal(out.eco_eim_whLifetime, 6_200);
 
   assert.equal(out.tableau_elec_whOffset, -800);
-});
-
-test("deriveFullData maintient grid_eim_whLifetime monotone entre deux cycles successifs", () => {
-  const service = createService({ sign: 1 });
-  service.tableauElec.state.currentPowerW = 0;
-  service.tableauElec.state.lastIndexWh = 1_000_000;
-
-  // Cycle 1: offset faible, grid_eim etabli a 4_000 (5_000 - 1_000).
-  service.tableauElec.state.energyFromIndexWh = 1_000;
-  const out1 = service.deriveFullData({
-    grid_eim_whLifetime: 5_000,
-    "prod/whLifetime": 12_000,
-  });
-  assert.equal(out1.grid_eim_whLifetime, 4_000);
-
-  // Cycle 2: la borne de recharge consomme beaucoup plus vite que l'export
-  // brut ne progresse (offset qui bondit) -> sans clamp, grid_eim tomberait
-  // a 5_100 - 3_000 = 2_100, en dessous du maximum deja publie (4_000).
-  service.tableauElec.state.energyFromIndexWh = 3_000;
-  const out2 = service.deriveFullData({
-    grid_eim_whLifetime: 5_100,
-    "prod/whLifetime": 12_050,
-  });
-
-  assert.equal(out2.grid_eim_whLifetime, 4_000); // fige, pas de recul
-  assert.ok(out2.eco_eim_whLifetime <= out2["prod/whLifetime"]);
 });
 
 test("deriveFullData n'ajoute pas les champs tableau_elec_* quand desactive", () => {
@@ -139,7 +107,6 @@ test("deriveFullData n'ajoute pas les champs tableau_elec_* quand desactive", ()
     "conso_all/wNow": 1500,
     "prod/wNow": 1200,
     "conso_net/voltage": 230,
-    grid_eim_whLifetime: 5_000,
     "prod/whLifetime": 12_000,
   };
 

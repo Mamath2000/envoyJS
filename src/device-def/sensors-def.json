@@ -53,7 +53,7 @@
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
-  "grid_eim_whLifetime": {
+  "grid/whLifetime": {
     "name": "Lifetime Energy to Grid",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -61,14 +61,14 @@
     "state_class": "total_increasing",
     "icon": "mdi:flash"
   },
-  "grid_eim_kwhLifetime": {
+  "grid/kwhLifetime": {
     "name": "Lifetime Energy to Grid (kWh)",
     "platform": "sensor",
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
     "icon": "mdi:flash",
-    "source_field": "grid_eim_whLifetime",
+    "source_field": "grid/whLifetime",
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
@@ -81,7 +81,7 @@
     "icon": "mdi:flash"
   },
 
-  "grid_eim_wNow": {
+  "grid/wNow": {
     "name": "Current Power to Grid",
     "platform": "sensor",
     "unit_of_measurement": "W",
@@ -89,7 +89,7 @@
     "state_class": "measurement",
     "icon": "mdi:flash"
   },
-  "grid_eim_wNow_binary": {
+  "grid/wNow_binary": {
     "name": "Current Power to Grid flag",
     "platform": "binary_sensor",
     "icon": "mdi:flash",
@@ -98,7 +98,7 @@
     "payload_off": 0
   },
 
-  "eco_eim_wNow": {
+  "eco/wNow": {
     "name": "Current Power Economy",
     "platform": "sensor",
     "unit_of_measurement": "W",
@@ -106,7 +106,7 @@
     "state_class": "measurement",
     "icon": "mdi:flash"
   },
-  "eco_eim_whLifetime": {
+  "eco/whLifetime": {
     "name": "Lifetime Energy Economy",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -114,14 +114,14 @@
     "state_class": "total_increasing",
     "icon": "mdi:flash"
   },
-  "eco_eim_kwhLifetime": {
+  "eco/kwhLifetime": {
     "name": "Lifetime Energy Economy (kWh)",
     "platform": "sensor",
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
     "icon": "mdi:flash",
-    "source_field": "eco_eim_whLifetime",
+    "source_field": "eco/whLifetime",
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
@@ -242,7 +242,7 @@
     "state_class": "total_increasing",
     "icon": "mdi:counter"
   },
-  "grid_eim_today": {
+  "grid/today": {
     "name": "Today's Energy To grid",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -250,7 +250,7 @@
     "state_class": "total_increasing",
     "icon": "mdi:counter"
   },
-  "eco_eim_today": {
+  "eco/today": {
     "name": "Today's Energy Economy",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -286,7 +286,7 @@
     "icon": "mdi:counter",
     "expire_after": 86405
   },
-  "grid_eim_yesterday": {
+  "grid/yesterday": {
     "name": "Yesterday Energy To grid",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -295,7 +295,7 @@
     "icon": "mdi:counter",
     "expire_after": 86405
   },
-  "eco_eim_yesterday": {
+  "eco/yesterday": {
     "name": "Yesterday Energy Economy",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -333,42 +333,6 @@
   },
   "edf_import_yesterday": {
     "name": "Yesterday Energy Import EDF",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:counter",
-    "expire_after": 86405
-  },
-
-  "eco_edf_today": {
-    "name": "Today's Energy Economy (EDF)",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:counter"
-  },
-  "eco_edf_yesterday": {
-    "name": "Yesterday Energy Economy (EDF)",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:counter",
-    "expire_after": 86405
-  },
-
-  "togrid_edf_today": {
-    "name": "Today's Energy To grid (EDF)",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:counter"
-  },
-  "togrid_edf_yesterday": {
-    "name": "Yesterday Energy To grid (EDF)",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
     "device_class": "energy",
