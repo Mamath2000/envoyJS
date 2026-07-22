@@ -31,16 +31,6 @@ test("deriveEnvoyFields avec correction positive decale la puissance instantanee
   assert.equal(out["eco/wNow"], 1200);
 });
 
-test("deriveEnvoyFields augmente import_eim de l'offset tableau ext", () => {
-  const base = {
-    import_eim_whLifetime: 3_000,
-  };
-
-  const out = deriveEnvoyFields(base, { signedPowerW: 0, energyOffsetWh: 1_000 });
-
-  assert.equal(out.import_eim_whLifetime, 4_000);
-});
-
 test("deriveEnvoyFields calcule grid/eco (whLifetime) a partir du compteur EDF (conservation d'energie)", () => {
   const base = {
     "conso_all/whLifetime": 20_000,
@@ -49,7 +39,7 @@ test("deriveEnvoyFields calcule grid/eco (whLifetime) a partir du compteur EDF (
 
   const out = deriveEnvoyFields(base, { signedPowerW: 0, energyOffsetWh: 0, edfImportWhLifetime: 15_000 });
 
-  assert.equal(out.edf_import_whLifetime, 15_000);
+  assert.equal(out["import/whLifetime"], 15_000);
   assert.equal(out["eco/whLifetime"], 5_000); // 20_000 (conso totale) - 15_000 (importe)
   assert.equal(out["grid/whLifetime"], 7_000); // 12_000 (prod) - 5_000 (eco)
 });
@@ -62,13 +52,13 @@ test("deriveEnvoyFields ne calcule pas grid/eco (whLifetime) si edfImportWhLifet
 
   const out = deriveEnvoyFields(base, { signedPowerW: 0, energyOffsetWh: 0 });
 
-  assert.equal(out.edf_import_whLifetime, undefined);
+  assert.equal(out["import/whLifetime"], undefined);
   assert.equal(out["eco/whLifetime"], undefined);
   assert.equal(out["grid/whLifetime"], undefined);
 });
 
 test("deriveEnvoyFields ne clampe PAS grid/eco (whLifetime) a 0: le decalage d'origine entre compteurs peut etre negatif, seul le delta _today compte", () => {
-  // conso_all/whLifetime et edf_import_whLifetime (Linky) ne partent pas du
+  // conso_all/whLifetime et import/whLifetime (Linky) ne partent pas du
   // meme "zero" (compteurs installes a des dates differentes) — leur difference
   // absolue n'a pas de sens physique et peut legitimement etre negative. Un
   // clamp a 0 ici ecraserait ce decalage a chaque cycle et bloquerait

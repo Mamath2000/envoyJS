@@ -49,7 +49,7 @@ export class EnvoyMqttService {
       "conso_all/whLifetime",
       "conso_net/whLifetime",
       "prod/whLifetime",
-      "edf_import_whLifetime",
+      "import/whLifetime",
       "eco/whLifetime",
       "grid/whLifetime",
     ];
@@ -985,8 +985,8 @@ export class EnvoyMqttService {
     const data = deriveEnvoyFields(rawFields, correction);
 
     if (this.tableauElec.enabled && data && typeof data === "object") {
-      data.tableau_elec_wNow = Math.round(correction.signedPowerW);
-      data.tableau_elec_whOffset = Math.round(correction.energyOffsetWh);
+      data["tableau_ext/wNow"] = Math.round(correction.signedPowerW);
+      data["tableau_ext/whOffset"] = Math.round(correction.energyOffsetWh);
     }
 
     return data;

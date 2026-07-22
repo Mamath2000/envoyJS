@@ -54,13 +54,6 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
     adjusted["conso_all/whLifetime"] = Math.max(0, Math.round(baseAllWhLifetime + energyOffsetWh));
   }
 
-  // import (tire du reseau) augmente quand la conso externe augmente: ce qu'elle
-  // consomme sans venir du solaire a bien fallu le tirer du reseau.
-  const baseImportWhLifetime = Number(adjusted.import_eim_whLifetime);
-  if (Number.isFinite(baseImportWhLifetime)) {
-    adjusted.import_eim_whLifetime = Math.max(0, Math.round(baseImportWhLifetime + energyOffsetWh));
-  }
-
   const prodWhLifetime = Number(adjusted["prod/whLifetime"]);
 
   // Compteur EDF (Linky, index EAST): situe avant la scission maison/tableau
@@ -74,21 +67,21 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
   // 6.3/6.4 dans la doc).
   //
   // Pas de clamp a 0 ici, volontairement: conso_all/whLifetime et
-  // edf_import_whLifetime ne partent pas du meme "zero" (le compteur Linky
-  // compte depuis sa propre installation, generalement bien avant le suivi
-  // logiciel de conso_all) — la difference absolue peut donc etre negative,
-  // sans aucune signification physique en tant que "total depuis toujours".
-  // Ce qui compte, et qui reste correct malgre ce decalage arbitraire, c'est
-  // le delta entre deux instants (_today/_yesterday, via _00h): ce decalage
-  // s'annule dans la soustraction, et le delta est physiquement toujours >= 0
-  // (Δeco(t) = Δconso_all(t) - Δedf_import(t) = autoconsommation reelle de
-  // l'instant >= 0, et par symetrie Δgrid(t) = Δprod(t) - Δeco(t) >= 0). Un
-  // clamp a 0 ici ecraserait ce delta a chaque cycle des que le decalage
-  // d'origine est negatif, rendant _today/_yesterday definitivement bloques a
-  // 0 (incident reel observe le 2026-07-23).
+  // import/whLifetime ne partent pas du meme "zero" (le compteur Linky compte
+  // depuis sa propre installation, generalement bien avant le suivi logiciel
+  // de conso_all) — la difference absolue peut donc etre negative, sans aucune
+  // signification physique en tant que "total depuis toujours". Ce qui compte,
+  // et qui reste correct malgre ce decalage arbitraire, c'est le delta entre
+  // deux instants (_today/_yesterday, via _00h): ce decalage s'annule dans la
+  // soustraction, et le delta est physiquement toujours >= 0 (Δeco(t) =
+  // Δconso_all(t) - Δimport(t) = autoconsommation reelle de l'instant >= 0, et
+  // par symetrie Δgrid(t) = Δprod(t) - Δeco(t) >= 0). Un clamp a 0 ici
+  // ecraserait ce delta a chaque cycle des que le decalage d'origine est
+  // negatif, rendant _today/_yesterday definitivement bloques a 0 (incident
+  // reel observe le 2026-07-23).
   const edfImportWhLifetime = Number(correction.edfImportWhLifetime);
   if (Number.isFinite(edfImportWhLifetime)) {
-    adjusted.edf_import_whLifetime = Math.round(edfImportWhLifetime);
+    adjusted["import/whLifetime"] = Math.round(edfImportWhLifetime);
 
     const consoAllWhLifetime = Number(adjusted["conso_all/whLifetime"]);
     if (Number.isFinite(consoAllWhLifetime)) {

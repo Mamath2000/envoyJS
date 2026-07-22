@@ -63,7 +63,7 @@ test("deriveFullData corrige conso_net/conso_all avec offset positif", () => {
   assert.equal(out["conso_net/whLifetime"], 11_000);
   assert.equal(out["conso_all/whLifetime"], 21_000);
 
-  assert.equal(out.tableau_elec_whOffset, 1_000);
+  assert.equal(out["tableau_ext/whOffset"], 1_000);
 });
 
 test("deriveFullData corrige conso_net/conso_all avec offset negatif", () => {
@@ -92,10 +92,10 @@ test("deriveFullData corrige conso_net/conso_all avec offset negatif", () => {
   assert.equal(out["conso_net/whLifetime"], 9_200);
   assert.equal(out["conso_all/whLifetime"], 19_200);
 
-  assert.equal(out.tableau_elec_whOffset, -800);
+  assert.equal(out["tableau_ext/whOffset"], -800);
 });
 
-test("deriveFullData n'ajoute pas les champs tableau_elec_* quand desactive", () => {
+test("deriveFullData n'ajoute pas les champs tableau_ext/* quand desactive", () => {
   const service = createService({ sign: 1 });
   service.tableauElec.enabled = false;
   service.tableauElec.state.currentPowerW = 200;
@@ -113,6 +113,6 @@ test("deriveFullData n'ajoute pas les champs tableau_elec_* quand desactive", ()
   const out = service.deriveFullData(base);
 
   assert.equal(out["conso_net/wNow"], 500);
-  assert.equal(out.tableau_elec_wNow, undefined);
-  assert.equal(out.tableau_elec_whOffset, undefined);
+  assert.equal(out["tableau_ext/wNow"], undefined);
+  assert.equal(out["tableau_ext/whOffset"], undefined);
 });

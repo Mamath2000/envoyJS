@@ -34,25 +34,6 @@
     "payload_off": 0
   },
 
-  "import_eim_whLifetime": {
-    "name": "Lifetime Energy Import Rx",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:flash"
-  },
-  "import_eim_kwhLifetime": {
-    "name": "Lifetime Energy Import Rx (kWh)",
-    "platform": "sensor",
-    "unit_of_measurement": "kWh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:flash",
-    "source_field": "import_eim_whLifetime",
-    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
-  },
-
   "grid/whLifetime": {
     "name": "Lifetime Energy to Grid",
     "platform": "sensor",
@@ -187,7 +168,7 @@
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
-  "tableau_elec_wNow": {
+  "tableau_ext/wNow": {
     "name": "Tableau Elec Ext",
     "platform": "sensor",
     "unit_of_measurement": "W",
@@ -195,7 +176,7 @@
     "state_class": "measurement",
     "icon": "mdi:transmission-tower"
   },
-  "tableau_elec_whOffset": {
+  "tableau_ext/whOffset": {
     "name": "Tableau Elec Ext Offset",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -305,7 +286,7 @@
     "expire_after": 86405
   },
 
-  "edf_import_whLifetime": {
+  "import/whLifetime": {
     "name": "Lifetime Energy Import EDF",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -313,17 +294,17 @@
     "state_class": "total_increasing",
     "icon": "mdi:transmission-tower-import"
   },
-  "edf_import_kwhLifetime": {
+  "import/kwhLifetime": {
     "name": "Lifetime Energy Import EDF (kWh)",
     "platform": "sensor",
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
     "icon": "mdi:transmission-tower-import",
-    "source_field": "edf_import_whLifetime",
+    "source_field": "import/whLifetime",
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
-  "edf_import_today": {
+  "import/today": {
     "name": "Today's Energy Import EDF",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -331,7 +312,7 @@
     "state_class": "total_increasing",
     "icon": "mdi:counter"
   },
-  "edf_import_yesterday": {
+  "import/yesterday": {
     "name": "Yesterday Energy Import EDF",
     "platform": "sensor",
     "unit_of_measurement": "Wh",

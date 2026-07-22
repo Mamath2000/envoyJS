@@ -76,7 +76,7 @@ test("getExternalCorrections expose edfImportWhLifetime", () => {
   assert.equal(correction.edfImportWhLifetime, 12_345);
 });
 
-test("deriveFullData integre edf_import/eco/grid via getExternalCorrections", () => {
+test("deriveFullData integre import/eco/grid via getExternalCorrections", () => {
   const service = createService();
   service.edfMeter.state.lastImportWh = 15_000;
 
@@ -85,15 +85,15 @@ test("deriveFullData integre edf_import/eco/grid via getExternalCorrections", ()
     "prod/whLifetime": 12_000,
   });
 
-  assert.equal(out.edf_import_whLifetime, 15_000);
+  assert.equal(out["import/whLifetime"], 15_000);
   assert.equal(out["eco/whLifetime"], 5_000);
   assert.equal(out["grid/whLifetime"], 7_000);
 });
 
-test("dailySensors inclut bien edf_import/eco/grid pour le rollover _00h/_today/_yesterday", () => {
+test("dailySensors inclut bien import/eco/grid pour le rollover _00h/_today/_yesterday", () => {
   const service = createService();
 
-  assert.ok(service.dailySensors.includes("edf_import_whLifetime"));
+  assert.ok(service.dailySensors.includes("import/whLifetime"));
   assert.ok(service.dailySensors.includes("eco/whLifetime"));
   assert.ok(service.dailySensors.includes("grid/whLifetime"));
 });
