@@ -151,6 +151,34 @@ test("les references minuit et le dernier jour de rollover sont restaurés depui
   }
 });
 
+test("gridEimMonotonicWhLifetime n'est jamais seede depuis une reference _00h obsolete au demarrage", () => {
+  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
+
+  try {
+    // Simule une reference _00h obsolete (ex: capturee sous un ancien mapping de
+    // champs errone) — si elle etait utilisee pour seeder le clamp monotone, ce
+    // dernier resterait bloqué dessus indefiniment (incident reel du 2026-07-22).
+    fs.writeFileSync(
+      stateFilePath,
+      JSON.stringify({
+        midnightReferences: { grid_eim_whLifetime: 38_195_247 },
+        lastMidnightCheck: "2026-07-19",
+      }),
+    );
+
+    const { service } = createService({ midnightReferencesStateFile: stateFilePath });
+    service.loadMidnightReferencesFromDisk();
+
+    assert.equal(service.midnightReferences.grid_eim_whLifetime, 38_195_247); // charge normalement
+    assert.equal(service.gridEimMonotonicWhLifetime, undefined); // mais jamais utilise comme graine
+
+    const out = service.deriveFullData({ grid_eim_whLifetime: 2_400_000, prod_eim_whLifetime: 12_600_000 });
+    assert.equal(out.grid_eim_whLifetime, 2_400_000); // pas bloqué sur la vieille valeur obsolete
+  } finally {
+    fs.rmSync(stateFilePath, { force: true });
+  }
+});
+
 test("un fichier d'etat avec un lastMidnightCheck invalide est ignoré", () => {
   const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
 

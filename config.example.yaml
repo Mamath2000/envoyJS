@@ -46,6 +46,11 @@ sensors:
     state_file: "data/tableau-elec-state.json"  # persistance de baseline/index entre redémarrages
     sign: 1                        # 1 ajoute au net, -1 soustrait
 
+  edf_meter:
+    enabled: false
+    topic: "teleinfo/022061153159"  # topic MQTT du bridge teleinfo (numero de compteur inclus)
+    index_field: "EAST.value"       # index Wh "Energie Active Soutirée Totale" (import cumulé, jamais decremente)
+
 state:
   midnight_references_file: "data/midnight-references-state.json"  # persistance des references _00h/dernier rollover entre redémarrages
 

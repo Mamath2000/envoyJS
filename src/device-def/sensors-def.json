@@ -291,5 +291,75 @@
     "state_class": "total_increasing",
     "icon": "mdi:counter",
     "expire_after": 86405
+  },
+
+  "edf_import_whLifetime": {
+    "name": "Lifetime Energy Import EDF",
+    "platform": "sensor",
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:transmission-tower-import"
+  },
+  "edf_import_kwhLifetime": {
+    "name": "Lifetime Energy Import EDF (kWh)",
+    "platform": "sensor",
+    "unit_of_measurement": "kWh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:transmission-tower-import"
+  },
+  "edf_import_today": {
+    "name": "Today's Energy Import EDF",
+    "platform": "sensor",
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:counter"
+  },
+  "edf_import_yesterday": {
+    "name": "Yesterday Energy Import EDF",
+    "platform": "sensor",
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:counter",
+    "expire_after": 86405
+  },
+
+  "eco_edf_today": {
+    "name": "Today's Energy Economy (EDF)",
+    "platform": "sensor",
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:counter"
+  },
+  "eco_edf_yesterday": {
+    "name": "Yesterday Energy Economy (EDF)",
+    "platform": "sensor",
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:counter",
+    "expire_after": 86405
+  },
+
+  "togrid_edf_today": {
+    "name": "Today's Energy To grid (EDF)",
+    "platform": "sensor",
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:counter"
+  },
+  "togrid_edf_yesterday": {
+    "name": "Yesterday Energy To grid (EDF)",
+    "platform": "sensor",
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing",
+    "icon": "mdi:counter",
+    "expire_after": 86405
   }
 }

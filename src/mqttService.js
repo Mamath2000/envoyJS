@@ -51,6 +51,9 @@ export class EnvoyMqttService {
       "prod_eim_whLifetime",
       "grid_eim_whLifetime",
       "eco_eim_whLifetime",
+      "edf_import_whLifetime",
+      "eco_edf_whLifetime",
+      "togrid_edf_whLifetime",
     ];
 
     this.midnightReferences = {};
@@ -59,6 +62,19 @@ export class EnvoyMqttService {
       this.config.midnightReferencesStateFile,
       "midnight-references-state.json",
     );
+
+    // Plus haute valeur jamais publiee pour grid_eim_whLifetime (voir
+    // deriveFullData/getExternalCorrections): garantit que ce cumul d'export ne
+    // redescend jamais, meme si la correction tableau elec le ferait chuter sous
+    // sa valeur precedente. grid_eim_kwhLifetime est simplement derive de cette
+    // valeur (/1000) en fin de calcul, pas besoin de le tracker separement.
+    // Volontairement PAS seede depuis le disque au demarrage: contrairement a
+    // _today/_yesterday (qui se corrigent au rollover suivant), ce clamp ne peut
+    // que monter, jamais redescendre — si la graine de depart est fausse (ex:
+    // reference _00h obsolete suite a un ancien bug de mapping), il reste bloque
+    // dessus indefiniment. On repart donc a chaque demarrage de la premiere
+    // valeur reellement recalculee (aucun risque d'empoisonnement).
+    this.gridEimMonotonicWhLifetime = undefined;
 
     this.tableauElec = {
       enabled: Boolean(this.config.tableauElecEnabled),
@@ -82,6 +98,22 @@ export class EnvoyMqttService {
       // Bookkeeping en memoire uniquement (non persisté sur disque) pour le
       // throttle des sauvegardes non critiques.
       lastSavedAt: 0,
+    };
+
+    // Compteur EDF (Linky, index EAST/"energie active soutiree totale"): situe
+    // avant la scission maison/tableau ext, il voit deja le vrai import combine
+    // des deux reseaux, sans avoir besoin d'aucune correction (contrairement au
+    // TOR, aveugle au tableau ext). C'est un vrai registre materiel (jamais
+    // remplace en pratique) — pas besoin de la machinerie anti-glitch complete
+    // du tableau ext, juste ignorer une baisse isolee (frame teleinfo corrompu).
+    this.edfMeter = {
+      enabled: Boolean(this.config.edfMeterEnabled),
+      topic: this.config.edfMeterTopic,
+      indexField: this.config.edfMeterIndexField,
+      state: {
+        lastImportWh: undefined,
+        lastRawPayload: undefined,
+      },
     };
 
     this.haDevice = {
@@ -454,6 +486,14 @@ export class EnvoyMqttService {
       });
     }
 
+    if (this.edfMeter.enabled && this.edfMeter.topic) {
+      client.subscribe(this.edfMeter.topic);
+      this.log.info("compteur EDF (teleinfo) activé", {
+        topic: this.edfMeter.topic,
+        indexField: this.edfMeter.indexField,
+      });
+    }
+
     client.on("message", (topicBuf, payloadBuf) => {
       const topic = String(topicBuf);
       const payload = payloadBuf.toString();
@@ -472,7 +512,36 @@ export class EnvoyMqttService {
           this.updateTableauElecIndexOffset(indexWh);
         }
       }
+
+      if (this.edfMeter.enabled && this.edfMeter.topic && topic === this.edfMeter.topic) {
+        this.edfMeter.state.lastRawPayload = payload;
+        this.updateEdfMeterImport(payload);
+      }
     });
+  }
+
+  updateEdfMeterImport(payload) {
+    let importWh = NaN;
+    try {
+      const parsed = JSON.parse(payload);
+      importWh = Number(this.extractByPath(parsed, this.edfMeter.indexField));
+    } catch (err) {
+      this.log.debug("payload EDF illisible, ignoré", { message: err?.message ?? String(err) });
+      return;
+    }
+
+    if (!Number.isFinite(importWh)) return;
+
+    const previous = this.edfMeter.state.lastImportWh;
+    if (previous != null && importWh < previous) {
+      // Baisse isolee (frame teleinfo corrompu le plus souvent): EAST est un
+      // registre materiel Linky, il ne peut physiquement pas redescendre. On
+      // ignore cette lecture plutot que de la committer.
+      this.log.debug("baisse isolée de l'index EDF ignorée", { previousWh: previous, receivedWh: importWh });
+      return;
+    }
+
+    this.edfMeter.state.lastImportWh = importWh;
   }
 
   async publishRawLoop() {
@@ -630,6 +699,13 @@ export class EnvoyMqttService {
       const tableauPayload = this.tableauElec.state.lastRawPayload;
       if (tableauPayload !== undefined) {
         await this.publish(`${this.topicDebug}/tableau_ext`, tableauPayload, { retain: true, debug: false });
+      }
+    }
+
+    if (this.edfMeter.enabled) {
+      const edfPayload = this.edfMeter.state.lastRawPayload;
+      if (edfPayload !== undefined) {
+        await this.publish(`${this.topicDebug}/edf_meter`, edfPayload, { retain: true, debug: false });
       }
     }
   }
@@ -907,20 +983,31 @@ export class EnvoyMqttService {
     });
   }
 
-  getTableauElecCorrection() {
-    if (!this.tableauElec.enabled) return { signedPowerW: 0, energyOffsetWh: 0 };
+  getExternalCorrections() {
+    const previousGridEimWhLifetime = this.gridEimMonotonicWhLifetime;
+    const edfImportWhLifetime = this.edfMeter.enabled ? this.edfMeter.state.lastImportWh : undefined;
+
+    if (!this.tableauElec.enabled) {
+      return { signedPowerW: 0, energyOffsetWh: 0, previousGridEimWhLifetime, edfImportWhLifetime };
+    }
 
     const signedPowerW = this.tableauElec.state.currentPowerW * this.tableauElec.sign;
     const energyOffsetWh = this.tableauElec.indexField && Number.isFinite(this.tableauElec.state.lastIndexWh)
       ? this.tableauElec.state.energyFromIndexWh
       : 0;
 
-    return { signedPowerW, energyOffsetWh };
+    return { signedPowerW, energyOffsetWh, previousGridEimWhLifetime, edfImportWhLifetime };
   }
 
   deriveFullData(rawFields) {
-    const correction = this.getTableauElecCorrection();
+    const correction = this.getExternalCorrections();
     const data = deriveEnvoyFields(rawFields, correction);
+
+    // grid_eim_whLifetime sort de deriveEnvoyFields deja clampe au plus haut
+    // jamais vu (voir envoyDerivedFields.js): on memorise ce nouveau maximum
+    // pour le prochain cycle, sinon la contrainte de monotonie n'aurait aucun
+    // effet d'un appel a l'autre.
+    if (Number.isFinite(data?.grid_eim_whLifetime)) this.gridEimMonotonicWhLifetime = data.grid_eim_whLifetime;
 
     if (this.tableauElec.enabled && data && typeof data === "object") {
       data.tableau_elec_wNow = Math.round(correction.signedPowerW);
