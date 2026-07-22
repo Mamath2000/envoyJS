@@ -46,9 +46,9 @@ export class EnvoyMqttService {
     this.topicDebug = `${this.baseTopic}/${this.serial}/debug`;
 
     this.dailySensors = [
-      "conso_all_eim_whLifetime",
-      "conso_net_eim_whLifetime",
-      "prod_eim_whLifetime",
+      "conso_all/whLifetime",
+      "conso_net/whLifetime",
+      "prod/whLifetime",
       "grid_eim_whLifetime",
       "eco_eim_whLifetime",
       "edf_import_whLifetime",
@@ -66,8 +66,9 @@ export class EnvoyMqttService {
     // Plus haute valeur jamais publiee pour grid_eim_whLifetime (voir
     // deriveFullData/getExternalCorrections): garantit que ce cumul d'export ne
     // redescend jamais, meme si la correction tableau elec le ferait chuter sous
-    // sa valeur precedente. grid_eim_kwhLifetime est simplement derive de cette
-    // valeur (/1000) en fin de calcul, pas besoin de le tracker separement.
+    // sa valeur precedente. grid_eim_kwhLifetime (sensor HA virtuel, voir
+    // src/device-def/sensors-def.json) en herite automatiquement puisqu'il lit
+    // ce meme topic Wh, pas besoin de le tracker separement.
     // Volontairement PAS seede depuis le disque au demarrage: contrairement a
     // _today/_yesterday (qui se corrigent au rollover suivant), ce clamp ne peut
     // que monter, jamais redescendre — si la graine de depart est fausse (ex:
@@ -238,7 +239,7 @@ export class EnvoyMqttService {
         await this.publish(`${this.topicData}/${sensor}_00h`, String(refValue), { retain: true });
       }
 
-      const yesterdayField = sensor.replace("_whLifetime", "_yesterday");
+      const yesterdayField = sensor.replace("whLifetime", "yesterday");
       const yesterdayValue = this.midnightReferences[yesterdayField];
       if (yesterdayValue != null) {
         await this.publish(`${this.topicData}/${yesterdayField}`, String(yesterdayValue), { retain: true });
@@ -407,7 +408,7 @@ export class EnvoyMqttService {
 
       if (this.config.haAutodiscovery) {
         const dailyKeys = Object.keys(this.calculateDailyValues(currentData));
-        const yesterdayKeys = dailyKeys.map((k) => k.replace("_today", "_yesterday"));
+        const yesterdayKeys = dailyKeys.map((k) => k.replace("today", "yesterday"));
         const allFields = [...Object.keys(currentData), ...dailyKeys, ...yesterdayKeys];
 
         await publishHaAutodiscoveryDynamic({
@@ -604,7 +605,7 @@ export class EnvoyMqttService {
 
         if (this.config.haAutodiscovery && !this.haDiscoveryPublished) {
           const dailyKeys = Object.keys(this.calculateDailyValues(fullData));
-          const yesterdayKeys = dailyKeys.map((k) => k.replace("_today", "_yesterday"));
+          const yesterdayKeys = dailyKeys.map((k) => k.replace("today", "yesterday"));
           const allFields = [...Object.keys(fullData), ...dailyKeys, ...yesterdayKeys];
 
           await publishHaAutodiscoveryDynamic({
@@ -747,7 +748,7 @@ export class EnvoyMqttService {
     // minuit) — seule sa precision depend de la frequence de polling.
     const dailyValues = this.calculateDailyValues(currentData);
     for (const [sensorToday, value] of Object.entries(dailyValues)) {
-      const yesterdayField = sensorToday.replace("_today", "_yesterday");
+      const yesterdayField = sensorToday.replace("today", "yesterday");
       this.midnightReferences[yesterdayField] = Number(value);
       const topic = `${this.topicData}/${yesterdayField}`;
       await this.publish(topic, String(value), { retain: true });
@@ -771,7 +772,7 @@ export class EnvoyMqttService {
 
     if (this.config.haAutodiscovery && this.mqttClient) {
       const dailyKeys = Object.keys(dailyValues);
-      const yesterdayKeys = dailyKeys.map((k) => k.replace("_today", "_yesterday"));
+      const yesterdayKeys = dailyKeys.map((k) => k.replace("today", "yesterday"));
       const allFields = [...Object.keys(currentData), ...dailyKeys, ...yesterdayKeys];
 
       await publishHaAutodiscoveryDynamic({
@@ -1032,7 +1033,7 @@ export class EnvoyMqttService {
 
       const diff = Number(currentValue) - Number(midnightRef);
       const rounded = Math.round(diff);
-      dailyValues[sensor.replace("_whLifetime", "_today")] = Math.max(0, rounded);
+      dailyValues[sensor.replace("whLifetime", "today")] = Math.max(0, rounded);
     }
 
     return dailyValues;

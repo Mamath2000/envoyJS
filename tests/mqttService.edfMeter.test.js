@@ -91,8 +91,8 @@ test("deriveFullData integre edf_import/eco_edf/togrid_edf via getExternalCorrec
   service.edfMeter.state.lastImportWh = 15_000;
 
   const out = service.deriveFullData({
-    conso_all_eim_whLifetime: 20_000,
-    prod_eim_whLifetime: 12_000,
+    "conso_all/whLifetime": 20_000,
+    "prod/whLifetime": 12_000,
   });
 
   assert.equal(out.edf_import_whLifetime, 15_000);

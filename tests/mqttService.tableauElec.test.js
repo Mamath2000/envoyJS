@@ -44,36 +44,27 @@ test("deriveFullData corrige to_grid et economie avec offset positif", () => {
   service.tableauElec.state.energyFromIndexWh = 1_000;
 
   const base = {
-    conso_net_eim_wNow: 500,
-    conso_all_eim_wNow: 1500,
-    prod_eim_wNow: 1200,
-    conso_net_eim_voltage: 230,
+    "conso_net/wNow": 500,
+    "conso_all/wNow": 1500,
+    "prod/wNow": 1200,
+    "conso_net/voltage": 230,
 
-    conso_net_eim_whLifetime: 10_000,
-    conso_net_eim_kwhLifetime: 10,
-    conso_all_eim_whLifetime: 20_000,
-    conso_all_eim_kwhLifetime: 20,
+    "conso_net/whLifetime": 10_000,
+    "conso_all/whLifetime": 20_000,
 
     grid_eim_whLifetime: 5_000,
-    grid_eim_kwhLifetime: 5,
-    prod_eim_whLifetime: 12_000,
-    prod_eim_kwhLifetime: 12,
+    "prod/whLifetime": 12_000,
   };
 
   const out = service.deriveFullData(base);
 
-  assert.equal(out.conso_net_eim_wNow, 700);
-  assert.equal(out.conso_all_eim_wNow, 1700);
+  assert.equal(out["conso_net/wNow"], 700);
+  assert.equal(out["conso_all/wNow"], 1700);
 
-  assert.equal(out.conso_net_eim_whLifetime, 11_000);
-  assert.equal(out.conso_all_eim_whLifetime, 21_000);
+  assert.equal(out["conso_net/whLifetime"], 11_000);
+  assert.equal(out["conso_all/whLifetime"], 21_000);
   assert.equal(out.grid_eim_whLifetime, 4_000);
   assert.equal(out.eco_eim_whLifetime, 8_000);
-
-  assert.equal(out.conso_net_eim_kwhLifetime, 11);
-  assert.equal(out.conso_all_eim_kwhLifetime, 21);
-  assert.equal(out.grid_eim_kwhLifetime, 4);
-  assert.equal(out.eco_eim_kwhLifetime, 8);
 
   assert.equal(out.tableau_elec_whOffset, 1_000);
 });
@@ -85,36 +76,27 @@ test("deriveFullData corrige to_grid et economie avec offset negatif", () => {
   service.tableauElec.state.energyFromIndexWh = -800;
 
   const base = {
-    conso_net_eim_wNow: 300,
-    conso_all_eim_wNow: 1300,
-    prod_eim_wNow: 900,
-    conso_net_eim_voltage: 230,
+    "conso_net/wNow": 300,
+    "conso_all/wNow": 1300,
+    "prod/wNow": 900,
+    "conso_net/voltage": 230,
 
-    conso_net_eim_whLifetime: 10_000,
-    conso_net_eim_kwhLifetime: 10,
-    conso_all_eim_whLifetime: 20_000,
-    conso_all_eim_kwhLifetime: 20,
+    "conso_net/whLifetime": 10_000,
+    "conso_all/whLifetime": 20_000,
 
     grid_eim_whLifetime: 5_000,
-    grid_eim_kwhLifetime: 5,
-    prod_eim_whLifetime: 12_000,
-    prod_eim_kwhLifetime: 12,
+    "prod/whLifetime": 12_000,
   };
 
   const out = service.deriveFullData(base);
 
-  assert.equal(out.conso_net_eim_wNow, 200);
-  assert.equal(out.conso_all_eim_wNow, 1200);
+  assert.equal(out["conso_net/wNow"], 200);
+  assert.equal(out["conso_all/wNow"], 1200);
 
-  assert.equal(out.conso_net_eim_whLifetime, 9_200);
-  assert.equal(out.conso_all_eim_whLifetime, 19_200);
+  assert.equal(out["conso_net/whLifetime"], 9_200);
+  assert.equal(out["conso_all/whLifetime"], 19_200);
   assert.equal(out.grid_eim_whLifetime, 5_800);
   assert.equal(out.eco_eim_whLifetime, 6_200);
-
-  assert.equal(out.conso_net_eim_kwhLifetime, 9.2);
-  assert.equal(out.conso_all_eim_kwhLifetime, 19.2);
-  assert.equal(out.grid_eim_kwhLifetime, 5.8);
-  assert.equal(out.eco_eim_kwhLifetime, 6.2);
 
   assert.equal(out.tableau_elec_whOffset, -800);
 });
@@ -128,7 +110,7 @@ test("deriveFullData maintient grid_eim_whLifetime monotone entre deux cycles su
   service.tableauElec.state.energyFromIndexWh = 1_000;
   const out1 = service.deriveFullData({
     grid_eim_whLifetime: 5_000,
-    prod_eim_whLifetime: 12_000,
+    "prod/whLifetime": 12_000,
   });
   assert.equal(out1.grid_eim_whLifetime, 4_000);
 
@@ -138,11 +120,11 @@ test("deriveFullData maintient grid_eim_whLifetime monotone entre deux cycles su
   service.tableauElec.state.energyFromIndexWh = 3_000;
   const out2 = service.deriveFullData({
     grid_eim_whLifetime: 5_100,
-    prod_eim_whLifetime: 12_050,
+    "prod/whLifetime": 12_050,
   });
 
   assert.equal(out2.grid_eim_whLifetime, 4_000); // fige, pas de recul
-  assert.ok(out2.eco_eim_whLifetime <= out2.prod_eim_whLifetime);
+  assert.ok(out2.eco_eim_whLifetime <= out2["prod/whLifetime"]);
 });
 
 test("deriveFullData n'ajoute pas les champs tableau_elec_* quand desactive", () => {
@@ -153,17 +135,17 @@ test("deriveFullData n'ajoute pas les champs tableau_elec_* quand desactive", ()
   service.tableauElec.state.energyFromIndexWh = 1_000;
 
   const base = {
-    conso_net_eim_wNow: 500,
-    conso_all_eim_wNow: 1500,
-    prod_eim_wNow: 1200,
-    conso_net_eim_voltage: 230,
+    "conso_net/wNow": 500,
+    "conso_all/wNow": 1500,
+    "prod/wNow": 1200,
+    "conso_net/voltage": 230,
     grid_eim_whLifetime: 5_000,
-    prod_eim_whLifetime: 12_000,
+    "prod/whLifetime": 12_000,
   };
 
   const out = service.deriveFullData(base);
 
-  assert.equal(out.conso_net_eim_wNow, 500);
+  assert.equal(out["conso_net/wNow"], 500);
   assert.equal(out.tableau_elec_wNow, undefined);
   assert.equal(out.tableau_elec_whOffset, undefined);
 });

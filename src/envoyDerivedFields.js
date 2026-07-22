@@ -2,32 +2,12 @@
  * Calcule les champs derives (grid/eco/courant/lifetime) a partir des champs
  * bruts normalises d'Envoy, en appliquant une correction optionnelle (ex:
  * tableau electrique deporte). Fonction pure, un seul passage de calcul.
+ *
+ * Aucun champ kWh n'est calcule ici: le kWh est toujours simplement le Wh /
+ * 1000, donc affiche cote Home Assistant via un value_template sur le topic
+ * Wh existant plutot que publie comme un champ MQTT separe (voir
+ * sensors-def.json / source_field, et src/ha/discovery.js).
  */
-
-// Paires whLifetime -> kwhLifetime: le kWh est toujours simplement le Wh / 1000,
-// jamais recalcule independamment (ca evite de dupliquer chaque formule de
-// correction une deuxieme fois pour rien).
-const KWH_SENSOR_PAIRS = [
-  ["prod_eim_whLifetime", "prod_eim_kwhLifetime"],
-  ["conso_net_eim_whLifetime", "conso_net_eim_kwhLifetime"],
-  ["conso_all_eim_whLifetime", "conso_all_eim_kwhLifetime"],
-  ["grid_eim_whLifetime", "grid_eim_kwhLifetime"],
-  ["import_eim_whLifetime", "import_eim_kwhLifetime"],
-  ["eco_eim_whLifetime", "eco_eim_kwhLifetime"],
-  ["edf_import_whLifetime", "edf_import_kwhLifetime"],
-  ["eco_edf_whLifetime", "eco_edf_kwhLifetime"],
-  ["togrid_edf_whLifetime", "togrid_edf_kwhLifetime"],
-];
-
-function addKwhSensors(adjusted) {
-  for (const [whKey, kwhKey] of KWH_SENSOR_PAIRS) {
-    const wh = Number(adjusted[whKey]);
-    if (Number.isFinite(wh)) {
-      adjusted[kwhKey] = Number((wh / 1000).toFixed(3));
-    }
-  }
-  return adjusted;
-}
 
 export function deriveEnvoyFields(rawFields, correction = {}) {
   if (!rawFields || typeof rawFields !== "object") return rawFields;
@@ -38,40 +18,40 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
   const adjusted = { ...rawFields };
 
   // Champ temps réél :
-  const baseNetPowerW = Number(adjusted.conso_net_eim_wNow ?? 0);
+  const baseNetPowerW = Number(adjusted["conso_net/wNow"] ?? 0);
   if (Number.isFinite(baseNetPowerW)) {
     const correctedNetPowerW = Math.round(baseNetPowerW + signedPowerW);
-    adjusted.conso_net_eim_wNow = correctedNetPowerW;
+    adjusted["conso_net/wNow"] = correctedNetPowerW;
 
     adjusted.grid_eim_wNow = correctedNetPowerW < 0 ? Math.abs(correctedNetPowerW) : 0;
     adjusted.grid_eim_wNow_binary = correctedNetPowerW > 0 ? 1 : 0;
 
-    const prodW = Number(adjusted.prod_eim_wNow);
+    const prodW = Number(adjusted["prod/wNow"]);
     if (Number.isFinite(prodW)) {
       adjusted.eco_eim_wNow = correctedNetPowerW < 0 ? prodW + correctedNetPowerW : prodW;
     }
 
     // Coherence electrique demandee: I = P / U
-    const netVoltageV = Number(adjusted.conso_net_eim_voltage);
+    const netVoltageV = Number(adjusted["conso_net/voltage"]);
     if (Number.isFinite(netVoltageV) && Math.abs(netVoltageV) > 0.1) {
-      adjusted.conso_net_eim_current = Number((correctedNetPowerW / netVoltageV).toFixed(3));
+      adjusted["conso_net/current"] = Number((correctedNetPowerW / netVoltageV).toFixed(3));
     }
   }
 
-  const baseAllPowerW = Number(adjusted.conso_all_eim_wNow);
+  const baseAllPowerW = Number(adjusted["conso_all/wNow"]);
   if (Number.isFinite(baseAllPowerW)) {
-    adjusted.conso_all_eim_wNow = Math.round(baseAllPowerW + signedPowerW);
+    adjusted["conso_all/wNow"] = Math.round(baseAllPowerW + signedPowerW);
   }
 
   // Index energie
-  const baseNetWhLifetime = Number(adjusted.conso_net_eim_whLifetime);
+  const baseNetWhLifetime = Number(adjusted["conso_net/whLifetime"]);
   if (Number.isFinite(baseNetWhLifetime)) {
-    adjusted.conso_net_eim_whLifetime = Math.max(0, Math.round(baseNetWhLifetime + energyOffsetWh));
+    adjusted["conso_net/whLifetime"] = Math.max(0, Math.round(baseNetWhLifetime + energyOffsetWh));
   }
 
-  const baseAllWhLifetime = Number(adjusted.conso_all_eim_whLifetime);
+  const baseAllWhLifetime = Number(adjusted["conso_all/whLifetime"]);
   if (Number.isFinite(baseAllWhLifetime)) {
-    adjusted.conso_all_eim_whLifetime = Math.max(0, Math.round(baseAllWhLifetime + energyOffsetWh));
+    adjusted["conso_all/whLifetime"] = Math.max(0, Math.round(baseAllWhLifetime + energyOffsetWh));
   }
 
   // to_grid (export) est un cumul d'energie reellement injectee au reseau: ca ne
@@ -98,7 +78,7 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
   }
 
   // economie = production - to_grid
-  const prodWhLifetime = Number(adjusted.prod_eim_whLifetime);
+  const prodWhLifetime = Number(adjusted["prod/whLifetime"]);
   const gridWhLifetime = Number(adjusted.grid_eim_whLifetime);
   if (Number.isFinite(prodWhLifetime) && Number.isFinite(gridWhLifetime)) {
     adjusted.eco_eim_whLifetime = Math.max(0, Math.round(prodWhLifetime - gridWhLifetime));
@@ -112,7 +92,7 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
   // correction grid_eim/tableau ext ci-dessus, qui dependait de quel reseau
   // exportait/importait a quel instant — voir doc 6.3/6.4).
   //
-  // Pas de clamp a 0 ici, volontairement: conso_all_eim_whLifetime et
+  // Pas de clamp a 0 ici, volontairement: conso_all/whLifetime et
   // edf_import_whLifetime ne partent pas du meme "zero" (le compteur Linky
   // compte depuis sa propre installation, generalement bien avant le suivi
   // logiciel de conso_all) — la difference absolue peut donc etre negative,
@@ -128,7 +108,7 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
   if (Number.isFinite(edfImportWhLifetime)) {
     adjusted.edf_import_whLifetime = Math.round(edfImportWhLifetime);
 
-    const consoAllWhLifetime = Number(adjusted.conso_all_eim_whLifetime);
+    const consoAllWhLifetime = Number(adjusted["conso_all/whLifetime"]);
     if (Number.isFinite(consoAllWhLifetime)) {
       adjusted.eco_edf_whLifetime = Math.round(consoAllWhLifetime - edfImportWhLifetime);
 
@@ -138,5 +118,5 @@ export function deriveEnvoyFields(rawFields, correction = {}) {
     }
   }
 
-  return addKwhSensors(adjusted);
+  return adjusted;
 }

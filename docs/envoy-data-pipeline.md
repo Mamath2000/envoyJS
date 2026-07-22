@@ -210,7 +210,7 @@ Definitions telles que documentees par l'API Envoy (endpoints ci-dessus), avant 
 - **actEnergyRcvd** ("The active energy received on this channel"): sur le compteur `net-consumption`, energie **recue par le reseau** (donc **export**). Confirme empiriquement: valeur proche de l'"Exporte" lifetime affiche par Enlighten. Attention, ce n'est pas le sens intuitif "recu/delivre par la maison" — c'est bien le reseau qui est le sujet de ces deux verbes ici.
 - **currW** / **rmsCurrent** / **rmsVoltage**: puissance instantanee (W) et valeurs RMS de courant/tension, retournees par `/ivp/meters/reports/consumption` (endpoint distinct de `/ivp/meters/readings`, dedie aux rapports de consommation).
 - **whDlvdCum**: cumul d'energie "delivree" (Wh) tel que retourne par `/ivp/meters/reports/consumption`. Pour `total-consumption`: consommation totale du foyer (tous circuits vus par l'Envoy). Pour `net-consumption`: solde net cumule, qui peut **monter et descendre** selon la balance production/consommation du moment (voir 6.3 et 9).
-- **wattHoursToday**: energie produite depuis minuit (Wh) telle que calculee par l'Envoy lui-meme, sur `/api/v1/production`. Republiee telle quelle en `prod_eim_wattHoursToday`, non utilisee pour le calcul interne de `*_today` (voir 5.2, qui recalcule sa propre valeur depuis les references `_00h`).
+- **wattHoursToday**: energie produite depuis minuit (Wh) telle que calculee par l'Envoy lui-meme, sur `/api/v1/production`. Republiee telle quelle en `prod/wattHoursToday`, non utilisee pour le calcul interne de `*_today` (voir 5.2, qui recalcule sa propre valeur depuis les references `_00h`).
 
 ## 4. Objets de sortie internes
 
@@ -237,19 +237,21 @@ Objet brut normalise pour la boucle principale (renommage de champs uniquement, 
 
 - puissances instantanees telles que renvoyees par l'Envoy
 - tensions/courants/facteur de puissance
-- compteurs lifetime Wh et kWh
+- compteurs lifetime Wh
 - timestamp et timestamp_text
+
+Aucun champ kWh n'est produit ici (ni nulle part ailleurs dans le pipeline, voir 6.3 "Champs kWh"): seul le Wh est calcule/publie, le kWh n'existant qu'a l'affichage Home Assistant.
 
 Exemples de champs produits:
 
-- prod_eim_wNow
-- conso_net_eim_wNow
-- conso_all_eim_wNow
-- prod_eim_whLifetime / prod_eim_kwhLifetime
-- conso_net_eim_whLifetime / conso_net_eim_kwhLifetime
-- conso_all_eim_whLifetime / conso_all_eim_kwhLifetime
+- prod/wNow
+- conso_net/wNow
+- conso_all/wNow
+- prod/whLifetime
+- conso_net/whLifetime
+- conso_all/whLifetime
 
-Note: `grid_eim_wNow`, `grid_eim_wNow_binary`, `eco_eim_wNow`, `eco_eim_whLifetime`, `eco_eim_kwhLifetime` et `conso_net_eim_current` ne font plus partie de cette sortie brute — ils sont calcules par `deriveEnvoyFields()` (voir 4.3), en un seul passage, a partir de cet objet.
+Note: `grid_eim_wNow`, `grid_eim_wNow_binary`, `eco_eim_wNow`, `eco_eim_whLifetime` et `conso_net/current` ne font plus partie de cette sortie brute — ils sont calcules par `deriveEnvoyFields()` (voir 4.3), en un seul passage, a partir de cet objet.
 
 Reference code:
 
@@ -260,11 +262,11 @@ Reference code:
 Fonction pure (src/envoyDerivedFields.js) qui prend l'objet brut de `getAllEnvoyData()` plus une correction optionnelle `{ signedPowerW, energyOffsetWh, previousGridEimWhLifetime }` (nulle par defaut) et renvoie l'objet final publie, en un seul passage de calcul:
 
 - champs bruts recopies tels quels
-- conso_net_eim_wNow / conso_all_eim_wNow decales de `signedPowerW`
+- conso_net/wNow / conso_all/wNow decales de `signedPowerW`
 - grid_eim_wNow, grid_eim_wNow_binary, eco_eim_wNow calcules a partir du net corrige
-- conso_net_eim_current recalcule via I = P / U
-- conso_net/all_eim_whLifetime decales de `energyOffsetWh`, grid_eim_whLifetime decale en sens inverse (clampe a 0 **et** au maximum deja atteint, voir 6.3), import_eim_whLifetime decale dans l'autre sens, eco_eim_whLifetime recalcule (clampe a 0)
-- tous les `*_kwhLifetime` correspondants sont ensuite derives en une passe finale (`addKwhSensors()`), simplement `whLifetime / 1000` — jamais recalcules independamment (voir 6.3)
+- conso_net/current recalcule via I = P / U
+- conso_net/whLifetime et conso_all/whLifetime decales de `energyOffsetWh`, grid_eim_whLifetime decale en sens inverse (clampe a 0 **et** au maximum deja atteint, voir 6.3), import_eim_whLifetime decale dans l'autre sens, eco_eim_whLifetime recalcule (clampe a 0)
+- aucun champ `*_kwhLifetime` n'est produit: le kWh n'est jamais publie comme champ MQTT separe, voir 6.3 "Champs kWh"
 
 Reference code:
 
@@ -282,7 +284,7 @@ A partir de la puissance nette corrigee (`correctedNetPowerW`, apres application
 
 Economie lifetime:
 
-- eco_eim_whLifetime = max(0, prod_eim_whLifetime - grid_eim_whLifetime_corrige)
+- eco_eim_whLifetime = max(0, prod/whLifetime - grid_eim_whLifetime_corrige)
 
 Ce calcul tourne desormais systematiquement dans `deriveEnvoyFields()`, tableau elec actif ou non (correction nulle dans ce dernier cas — voir 6.3).
 
@@ -294,9 +296,9 @@ Reference code:
 
 Le service maintient une reference minuit pour:
 
-- conso_all_eim_whLifetime
-- conso_net_eim_whLifetime
-- prod_eim_whLifetime
+- conso_all/whLifetime
+- conso_net/whLifetime
+- prod/whLifetime
 - grid_eim_whLifetime
 - eco_eim_whLifetime
 
@@ -412,47 +414,50 @@ Le code applique les corrections suivantes (dans src/envoyDerivedFields.js).
 Correction puissance instantanee (avec signe):
 
 - signedPowerW = tableau_elec_power * sign
-- conso_net_eim_wNow = conso_net_eim_wNow_envoy + signedPowerW
-- conso_all_eim_wNow = conso_all_eim_wNow_envoy + signedPowerW
+- conso_net/wNow = conso_net/wNow_envoy + signedPowerW
+- conso_all/wNow = conso_all/wNow_envoy + signedPowerW
 
 Puis recalcul de derivees instantanees:
 
 - grid_eim_wNow
 - grid_eim_wNow_binary
 - eco_eim_wNow
-- conso_net_eim_current (via I = P / U)
+- conso_net/current (via I = P / U)
 
-Correction energie cumulative (Wh) via index differentiel uniquement — les corrections ne portent que sur les champs `*_whLifetime`; les `*_kwhLifetime` correspondants ne sont jamais recalcules independamment, voir "Champs kWh" plus bas:
+Correction energie cumulative (Wh) via index differentiel uniquement — le kWh n'existe plus comme champ separe, voir "Champs kWh" plus bas:
 
 - energyOffsetWh = somme des deltas d index externe confirmes (jamais la valeur absolue)
-- conso_net_eim_whLifetime = conso_net_eim_whLifetime_envoy + energyOffsetWh
-- conso_all_eim_whLifetime = conso_all_eim_whLifetime_envoy + energyOffsetWh
+- conso_net/whLifetime = conso_net/whLifetime_envoy + energyOffsetWh
+- conso_all/whLifetime = conso_all/whLifetime_envoy + energyOffsetWh
 - grid_eim_whLifetime = max(previousGridEimWhLifetime, grid_eim_whLifetime_envoy - energyOffsetWh)
 - import_eim_whLifetime = import_eim_whLifetime_envoy + energyOffsetWh
-- eco_eim_whLifetime = prod_eim_whLifetime - grid_eim_whLifetime_corrige
+- eco_eim_whLifetime = prod/whLifetime - grid_eim_whLifetime_corrige
 
 `grid_eim_whLifetime` (mappe depuis `actEnergyRcvd` du compteur net-consumption, cf. 3.2 et 3.5 — recu **par le reseau**, donc export) represente l'energie **exportee** vers le reseau, et `import_eim_whLifetime` (mappe depuis `actEnergyDlvd`, delivre **par le reseau**, donc import) l'energie **importee**. Le tableau ext peut consommer du solaire sans que la pince du compteur net-consumption ne le voie: sa consommation reduit d'autant ce qui a reellement ete exporte (soustraction) et augmente d'autant ce qui a reellement du etre importe (addition) — les deux corrections sont symetriques, dans le sens oppose l'une de l'autre.
 
-#### Champs kWh: toujours derives, jamais recalcules
+#### Champs kWh: jamais publies, calcules a l'affichage cote Home Assistant
 
-`addKwhSensors()` (en fin de `deriveEnvoyFields()`) parcourt une liste fixe de paires `whLifetime -> kwhLifetime` (prod, conso_net, conso_all, grid_eim, import_eim, eco_eim) et pose `*_kwhLifetime = *_whLifetime / 1000` (arrondi a 3 decimales), une seule fois, apres tous les autres calculs. Aucune formule de correction n'est dupliquee en kWh — ca evite le double calcul et garantit que Wh et kWh restent toujours parfaitement coherents entre eux.
+`deriveEnvoyFields()` ne produit plus aucun champ `*_kwhLifetime`: seul le Wh est calcule/publie sur MQTT (`data/<champ>/whLifetime`). Le kWh n'est jamais qu'un `/1000` du Wh — le dupliquer comme second champ MQTT n'apportait rien et risquait de desynchroniser Wh/kWh si une seule des deux valeurs etait mise a jour.
+
+A la place, `src/device-def/sensors-def.json` declare des sensors HA "virtuels": une entree comme `prod/kwhLifetime` porte un `source_field: "prod/whLifetime"` et son propre `value_template: "{{ (value | float(default=0) / 1000) | round(3) }}"`. `publishHaAutodiscoveryDynamic()` (src/ha/discovery.js) resout ces definitions en s'abonnant au **topic Wh** (`source_field`) mais en publiant sa propre config de decouverte (nom, `unique_id`, `unit_of_measurement: kWh`, `value_template` /1000) — HA affiche donc un capteur kWh a jour en temps reel, sans qu'aucun octet supplementaire ne soit publie sur MQTT. Concerne: `prod`, `conso_net`, `conso_all`, `grid_eim`, `import_eim`, `eco_eim`, `edf_import` (tous les `*_kwhLifetime` de `sensors-def.json`, voir 9).
 
 #### Monotonie de grid_eim_whLifetime (export)
 
 `energyOffsetWh` ne fait qu'augmenter (voir 6.3). Si le tableau ext consomme plus vite que `grid_eim_whLifetime_envoy` (brut) ne progresse — typiquement une recharge de vehicule qui tire sur le reseau independamment du solaire disponible a l'instant — la soustraction peut faire chuter la valeur corrigee sous ce qui a deja ete publie. Physiquement impossible: l'energie deja exportee au reseau ne peut pas etre "desexportee" — importer maintenant signifie seulement qu'on n'exporte pas maintenant, pas que l'export recule.
 
-`deriveEnvoyFields()` recoit donc `previousGridEimWhLifetime` dans l'objet `correction` (fourni par `EnvoyMqttService.getExternalCorrections()`, alimente depuis `this.gridEimMonotonicWhLifetime`) et clampe `grid_eim_whLifetime` au maximum entre la valeur recalculee et ce plus haut deja atteint — `grid_eim_kwhLifetime` en herite automatiquement via `addKwhSensors()`, pas besoin de le clamper separement. `deriveFullData()` met a jour `this.gridEimMonotonicWhLifetime` avec la valeur (deja clampee) en sortie, a chaque cycle — garantissant la monotonie d'un cycle a l'autre. Comme `eco_eim_whLifetime = prod - grid_eim_whLifetime` est calcule *apres* ce clamp, `eco_eim_today` reste toujours `<= prod_eim_today` (sans quoi une chute de `grid_eim` inversait artificiellement cette relation — incident reel observe le 2026-07-22).
+`deriveEnvoyFields()` recoit donc `previousGridEimWhLifetime` dans l'objet `correction` (fourni par `EnvoyMqttService.getExternalCorrections()`, alimente depuis `this.gridEimMonotonicWhLifetime`) et clampe `grid_eim_whLifetime` au maximum entre la valeur recalculee et ce plus haut deja atteint — `grid_eim_kwhLifetime` (sensor HA virtuel, voir "Champs kWh" ci-dessus) en herite automatiquement puisqu'il lit ce meme topic Wh deja clampe. `deriveFullData()` met a jour `this.gridEimMonotonicWhLifetime` avec la valeur (deja clampee) en sortie, a chaque cycle — garantissant la monotonie d'un cycle a l'autre. Comme `eco_eim_whLifetime = prod - grid_eim_whLifetime` est calcule *apres* ce clamp, `eco_eim_today` reste toujours `<= prod/today` (sans quoi une chute de `grid_eim` inversait artificiellement cette relation — incident reel observe le 2026-07-22).
 
 `this.gridEimMonotonicWhLifetime` n'est **pas** persistee ni seedee depuis le disque au demarrage — c'est volontaire. Contrairement a `_today`/`_yesterday`, ce clamp ne peut que monter, jamais redescendre: le seeder depuis une reference `_00h` qui se revelerait fausse (ex: apres un ancien bug de mapping de champs) le bloquerait indefiniment sur cette valeur fausse, sans aucun moyen de se corriger tout seul (incident reel observe le 2026-07-22, cf. historique). Chaque redemarrage repart donc de `undefined` et s'etablit proprement des le premier cycle sur la valeur reellement recalculee — au prix d'un tres leger risque (non observe en pratique) qu'un redemarrage tombant pile sur un creux transitoire de la correction tableau elec expose brievement une valeur legerement plus basse pendant un cycle, avant de remonter normalement.
 
 Reference code:
 
-- src/envoyDerivedFields.js (KWH_SENSOR_PAIRS/addKwhSensors, clamp monotone sur grid_eim_whLifetime)
+- src/envoyDerivedFields.js (clamp monotone sur grid_eim_whLifetime)
 - src/mqttService.js (getExternalCorrections, deriveFullData)
+- src/ha/discovery.js (sensors HA virtuels kWh via source_field)
 
 Impact sur les calculs journaliers:
 
-- conso_all_eim_today, conso_net_eim_today, grid_eim_today et eco_eim_today sont corriges,
+- conso_all/today, conso_net/today, grid_eim_today et eco_eim_today sont corriges,
   car calcules depuis les lifetimes corriges.
 
 #### Autodiscovery Home Assistant
@@ -489,11 +494,11 @@ Le compteur EDF (index `EAST`, "energie active soutiree totale") est place **ava
 Avec cette donnee, `eco`/`to_grid` se deduisent par une identite de conservation d'energie — toujours vraie, sans condition, contrairement a la correction TOR ci-dessus:
 
 ```
-eco_edf_whLifetime    = conso_all_eim_whLifetime − edf_import_whLifetime
-togrid_edf_whLifetime = prod_eim_whLifetime − eco_edf_whLifetime
+eco_edf_whLifetime    = conso_all/whLifetime − edf_import_whLifetime
+togrid_edf_whLifetime = prod/whLifetime − eco_edf_whLifetime
 ```
 
-**Volontairement pas de `max(0, ...)` ici** (contrairement a `grid_eim_whLifetime`, 6.3): `conso_all_eim_whLifetime` et `edf_import_whLifetime` (EAST) ne partent pas du meme "zero" — le compteur Linky compte depuis sa propre installation, generalement bien avant que ce logiciel ne suive `conso_all`. La difference absolue peut donc etre negative (observe en pratique: incident du 2026-07-23), sans aucune signification physique en tant que "total depuis toujours" — mais ce decalage arbitraire est **constant** et s'annule dans n'importe quel delta. Consequence: `eco_edf_whLifetime`/`togrid_edf_whLifetime` sont **naturellement monotones dans le temps** (a chaque instant, une hausse de consommation vient forcement soit de l'import soit de l'autoconsommation solaire — `Δeco_edf(t) = Δconso_all(t) − Δedf_import(t) >= 0`, toujours vrai physiquement), mais leur **valeur absolue n'a de sens qu'en delta** (`_today`/`_yesterday`, deja correctement clampes a 0 par le mecanisme generique de `calculateDailyValues()`, voir 5.2) — jamais en `whLifetime` brut. C'est pour cette raison que seuls `eco_edf_today`/`eco_edf_yesterday`/`togrid_edf_today`/`togrid_edf_yesterday` sont exposes a la decouverte Home Assistant (`src/device-def/sensors-def.json`) — pas `eco_edf_whLifetime`/`togrid_edf_whLifetime` ni leurs variantes kWh, qui resteraient neanmoins consultables sur le topic MQTT brut pour du debug.
+**Volontairement pas de `max(0, ...)` ici** (contrairement a `grid_eim_whLifetime`, 6.3): `conso_all/whLifetime` et `edf_import_whLifetime` (EAST) ne partent pas du meme "zero" — le compteur Linky compte depuis sa propre installation, generalement bien avant que ce logiciel ne suive `conso_all`. La difference absolue peut donc etre negative (observe en pratique: incident du 2026-07-23), sans aucune signification physique en tant que "total depuis toujours" — mais ce decalage arbitraire est **constant** et s'annule dans n'importe quel delta. Consequence: `eco_edf_whLifetime`/`togrid_edf_whLifetime` sont **naturellement monotones dans le temps** (a chaque instant, une hausse de consommation vient forcement soit de l'import soit de l'autoconsommation solaire — `Δeco_edf(t) = Δconso_all(t) − Δedf_import(t) >= 0`, toujours vrai physiquement), mais leur **valeur absolue n'a de sens qu'en delta** (`_today`/`_yesterday`, deja correctement clampes a 0 par le mecanisme generique de `calculateDailyValues()`, voir 5.2) — jamais en `whLifetime` brut. C'est pour cette raison que seuls `eco_edf_today`/`eco_edf_yesterday`/`togrid_edf_today`/`togrid_edf_yesterday` sont exposes a la decouverte Home Assistant (`src/device-def/sensors-def.json`) — pas `eco_edf_whLifetime`/`togrid_edf_whLifetime` ni leurs variantes kWh, qui resteraient neanmoins consultables sur le topic MQTT brut pour du debug.
 
 #### Format de payload et configuration
 
@@ -558,14 +563,18 @@ Reference code:
 - base/serial/data/*_yesterday (retained)
 - base/serial/data/last_midnight_check (retained, technique — dernier jour de rollover, voir 5.2)
 
+**Convention de nommage `prod`/`conso_all`/`conso_net`**: ces familles ne portent pas le suffixe `_eim` contrairement aux autres champs Envoy, et sont publiees sous un sous-topic dedie plutot qu'un nom de champ plat: `base/serial/data/prod/whLifetime`, `base/serial/data/conso_all/whLifetime`, `base/serial/data/conso_net/wNow`, etc. (le nom de champ interne contient directement le `/`). Raison: une fois passees par `deriveEnvoyFields()`, ces valeurs sont recopiees/corrigees (`+= signedPowerW`/`energyOffsetWh` pour `conso_all`/`conso_net`, voir 6.3) — ce ne sont plus de simples alias du compteur `eim` d'Envoy, le suffixe n'aurait donc plus de sens. A l'inverse, `getRawData()` (8.3) garde `prod_eim_wNow`/`conso_all_eim_wNow`/`conso_net_eim_wNow`: c'est une lecture brute, non corrigee, ou `eim` reste exact. `grid_eim`/`import_eim`/`eco_eim`, bien que corriges eux aussi, conservent pour l'instant leur nom historique (perimetre volontairement limite a `prod`/`conso_all`/`conso_net` pour cette passe de nettoyage).
+
+**Pas de champ `*_kwhLifetime`**: le kWh n'est jamais publie comme champ MQTT — seul le Wh (`whLifetime`) l'est. Le kWh est calcule a l'affichage par Home Assistant via un sensor "virtuel" (`source_field` + `value_template` de division par 1000, voir `src/device-def/sensors-def.json` et 6.3 "Champs kWh").
+
 ### 8.3 Donnees raw
 
 - base/serial/raw/field (non retained)
 
 ### 8.4 Capteurs JSON dedies
 
-- topic pv_production: energy, power, facteur_de_puiss, voltage, current
-- topic conso_net: energy, energy_flow, power_cons, power, facteur_de_puiss, voltage, current
+- topic pv_production: energy, power, voltage, current
+- topic conso_net: energy, energy_flow, power_cons, power, voltage, current
 
 Reference code:
 
@@ -593,59 +602,59 @@ Reference code:
 
 Tableau de tous les champs publies sous `topicData` (`base/serial/data/*`), avec leur origine technique (endpoint + champ brut) ou le calcul qui les produit, et leur description. "Corrige" signifie: apres application de la correction tableau elec (`signedPowerW`/`energyOffsetWh`, nulle si tableau elec desactive — voir 6.3).
 
+Les lignes `*/kwhLifetime` ne sont **jamais publiees comme champ MQTT**: ce sont des sensors HA "virtuels" (`source_field` + `value_template` /1000, voir 6.3 "Champs kWh" et `src/device-def/sensors-def.json`), affiches par Home Assistant a partir du topic Wh correspondant.
+
 ### 9.1 Production
 
 | Champ | Origine / Calcul | Description |
 |---|---|---|
-| `prod_eim_wNow` | `/ivp/meters/readings`, compteur `production`, `instantaneousDemand` | Puissance instantanee produite par les panneaux (W) |
-| `prod_eim_wNow_binary` | Calcule: `1` si `prod_eim_wNow > 5` sinon `0` | Indicateur binaire "production active" (seuil de 5W pour ignorer le bruit de mesure nocturne) |
-| `prod_eim_voltage` | `/ivp/meters/readings`, compteur `production`, `voltage` | Tension mesuree cote production (V) |
-| `prod_eim_current` | `/ivp/meters/readings`, compteur `production`, `current` | Courant mesure cote production (A) |
-| `prod_eim_pwrFactor` | `/ivp/meters/readings`, compteur `production`, `pwrFactor` | Facteur de puissance cote production |
-| `prod_eim_whLifetime` | `/ivp/meters/readings`, compteur `production`, `actEnergyDlvd` | Energie produite cumulee depuis l'installation (Wh) — fiable, non affectee par le tableau ext |
-| `prod_eim_kwhLifetime` | Calcule: `prod_eim_whLifetime / 1000` | Idem en kWh |
-| `prod_eim_wattHoursToday` | `/api/v1/production`, `wattHoursToday` | Energie produite depuis minuit selon l'Envoy lui-meme (indicatif, non utilise dans les calculs de `*_today`, voir 3.5) |
-| `prod_eim_today` | Calcule, voir 9.5 | Production depuis minuit (Wh), calcul interne |
-| `prod_eim_yesterday` | Calcule, voir 9.5 | Production de la veille (Wh) |
+| `prod/wNow` | `/ivp/meters/readings`, compteur `production`, `instantaneousDemand` | Puissance instantanee produite par les panneaux (W) |
+| `prod/wNow_binary` | Calcule: `1` si `prod/wNow > 5` sinon `0` | Indicateur binaire "production active" (seuil de 5W pour ignorer le bruit de mesure nocturne) |
+| `prod/voltage` | `/ivp/meters/readings`, compteur `production`, `voltage` | Tension mesuree cote production (V) |
+| `prod/current` | `/ivp/meters/readings`, compteur `production`, `current` | Courant mesure cote production (A) |
+| `prod/whLifetime` | `/ivp/meters/readings`, compteur `production`, `actEnergyDlvd` | Energie produite cumulee depuis l'installation (Wh) — fiable, non affectee par le tableau ext |
+| `prod/kwhLifetime` | Sensor HA virtuel: `source_field: "prod/whLifetime"`, `value_template` /1000 | Affichage kWh, non publie sur MQTT |
+| `prod/wattHoursToday` | `/api/v1/production`, `wattHoursToday` | Energie produite depuis minuit selon l'Envoy lui-meme (indicatif, non utilise dans les calculs de `*_today`, voir 3.5) |
+| `prod/today` | Calcule, voir 9.5 | Production depuis minuit (Wh), calcul interne |
+| `prod/yesterday` | Calcule, voir 9.5 | Production de la veille (Wh) |
 
 ### 9.2 Consommation nette (net-consumption)
 
 | Champ | Origine / Calcul | Description |
 |---|---|---|
-| `conso_net_eim_wNow` | `/ivp/meters/readings`, compteur `net-consumption`, `instantaneousDemand`, corrige (`+= signedPowerW`) | Bilan de puissance net instantane (W): positif = import du reseau, negatif = export vers le reseau |
-| `conso_net_eim_voltage` | `/ivp/meters/readings`, compteur `net-consumption`, `voltage` | Tension mesuree cote compteur net |
-| `conso_net_eim_current` | Calcule: `I = P / U` a partir de `conso_net_eim_wNow` corrige et `conso_net_eim_voltage` | Courant recalcule (le champ brut `current` du compteur net-consumption est ecrase par ce recalcul) |
-| `conso_net_eim_pwrFactor` | `/ivp/meters/readings`, compteur `net-consumption`, `pwrFactor` | Facteur de puissance cote compteur net |
-| `conso_net_eim_whLifetime` | `/ivp/meters/reports/consumption`, reportType `net-consumption`, `whDlvdCum`, corrige (`+= energyOffsetWh`) | Solde net cumule depuis l'installation (Wh); peut monter **et** descendre selon la balance prod/conso (voir 3.5, 9.6) |
-| `conso_net_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+| `conso_net/wNow` | `/ivp/meters/readings`, compteur `net-consumption`, `instantaneousDemand`, corrige (`+= signedPowerW`) | Bilan de puissance net instantane (W): positif = import du reseau, negatif = export vers le reseau |
+| `conso_net/voltage` | `/ivp/meters/readings`, compteur `net-consumption`, `voltage` | Tension mesuree cote compteur net |
+| `conso_net/current` | Calcule: `I = P / U` a partir de `conso_net/wNow` corrige et `conso_net/voltage` | Courant recalcule (le champ brut `current` du compteur net-consumption est ecrase par ce recalcul) |
+| `conso_net/whLifetime` | `/ivp/meters/reports/consumption`, reportType `net-consumption`, `whDlvdCum`, corrige (`+= energyOffsetWh`) | Solde net cumule depuis l'installation (Wh); peut monter **et** descendre selon la balance prod/conso (voir 3.5, 9.6) |
+| `conso_net/kwhLifetime` | Sensor HA virtuel: `source_field: "conso_net/whLifetime"`, `value_template` /1000 | Affichage kWh, non publie sur MQTT |
 
 ### 9.3 Consommation totale (total-consumption)
 
 | Champ | Origine / Calcul | Description |
 |---|---|---|
-| `conso_all_eim_wNow` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `currW`, corrige (`+= signedPowerW`) | Puissance totale consommee par le foyer, tous circuits vus par l'Envoy (W) |
-| `conso_all_eim_rmsCurrent` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `rmsCurrent` | Courant RMS cote consommation totale (A) |
-| `conso_all_eim_rmsVoltage` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `rmsVoltage` | Tension RMS cote consommation totale (V) |
-| `conso_all_eim_whLifetime` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `whDlvdCum`, corrige (`+= energyOffsetWh`) | Energie totale consommee cumulee depuis l'installation (Wh) |
-| `conso_all_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+| `conso_all/wNow` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `currW`, corrige (`+= signedPowerW`) | Puissance totale consommee par le foyer, tous circuits vus par l'Envoy (W) |
+| `conso_all/rmsCurrent` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `rmsCurrent` | Courant RMS cote consommation totale (A) |
+| `conso_all/rmsVoltage` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `rmsVoltage` | Tension RMS cote consommation totale (V) |
+| `conso_all/whLifetime` | `/ivp/meters/reports/consumption`, reportType `total-consumption`, `whDlvdCum`, corrige (`+= energyOffsetWh`) | Energie totale consommee cumulee depuis l'installation (Wh) |
+| `conso_all/kwhLifetime` | Sensor HA virtuel: `source_field: "conso_all/whLifetime"`, `value_template` /1000 | Affichage kWh, non publie sur MQTT |
 
 ### 9.4 Import / export / economie (derives du compteur net-consumption)
 
 | Champ | Origine / Calcul | Description |
 |---|---|---|
 | `import_eim_whLifetime` | `/ivp/meters/readings`, compteur `net-consumption`, `actEnergyDlvd`, corrige (`+= energyOffsetWh`, clampe a 0) | Energie importee cumulee depuis le reseau (Wh) |
-| `import_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+| `import_eim_kwhLifetime` | Sensor HA virtuel: `source_field: "import_eim_whLifetime"`, `value_template` /1000 | Affichage kWh, non publie sur MQTT |
 | `grid_eim_whLifetime` | `/ivp/meters/readings`, compteur `net-consumption`, `actEnergyRcvd`, corrige (`-= energyOffsetWh`, clampe a 0 **et au maximum deja atteint** — voir 6.3) | Energie exportee cumulee vers le reseau (Wh) ("to_grid"), garantie monotone (ne redescend jamais) |
-| `grid_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
-| `grid_eim_wNow` | Calcule: `abs(conso_net_eim_wNow corrige)` si negatif, sinon `0` | Puissance exportee instantanee (W) |
-| `grid_eim_wNow_binary` | Calcule: `1` si `conso_net_eim_wNow` corrige `> 0` (import), sinon `0` | Indicateur binaire "en import" a l'instant T |
-| `eco_eim_wNow` | Calcule: `prod_eim_wNow + conso_net_eim_wNow corrige` si ce dernier est negatif, sinon `prod_eim_wNow` | Puissance instantanee autoconsommee grace au solaire (W) |
-| `eco_eim_whLifetime` | Calcule: `max(0, prod_eim_whLifetime - grid_eim_whLifetime corrige)` | Energie autoconsommee cumulee (Wh). Toujours `<= prod_eim_whLifetime` par construction |
-| `eco_eim_kwhLifetime` | Idem en kWh | Idem en kWh |
+| `grid_eim_kwhLifetime` | Sensor HA virtuel: `source_field: "grid_eim_whLifetime"`, `value_template` /1000 | Affichage kWh, non publie sur MQTT — herite automatiquement du clamp monotone du Wh |
+| `grid_eim_wNow` | Calcule: `abs(conso_net/wNow corrige)` si negatif, sinon `0` | Puissance exportee instantanee (W) |
+| `grid_eim_wNow_binary` | Calcule: `1` si `conso_net/wNow` corrige `> 0` (import), sinon `0` | Indicateur binaire "en import" a l'instant T |
+| `eco_eim_wNow` | Calcule: `prod/wNow + conso_net/wNow corrige` si ce dernier est negatif, sinon `prod/wNow` | Puissance instantanee autoconsommee grace au solaire (W) |
+| `eco_eim_whLifetime` | Calcule: `max(0, prod/whLifetime - grid_eim_whLifetime corrige)` | Energie autoconsommee cumulee (Wh). Toujours `<= prod/whLifetime` par construction |
+| `eco_eim_kwhLifetime` | Sensor HA virtuel: `source_field: "eco_eim_whLifetime"`, `value_template` /1000 | Affichage kWh, non publie sur MQTT |
 
 ### 9.5 Journalier (`_today` / `_yesterday` / `_00h`)
 
-Applicable a chaque capteur de `dailySensors`: `conso_all_eim`, `conso_net_eim`, `prod_eim`, `grid_eim`, `eco_eim`, `edf_import_eim`, `eco_edf`, `togrid_edf` (au niveau `whLifetime`).
+Applicable a chaque capteur de `dailySensors`: `conso_all`, `conso_net`, `prod`, `grid_eim`, `eco_eim`, `edf_import`, `eco_edf`, `togrid_edf` (au niveau `whLifetime`).
 
 | Champ | Origine / Calcul | Description |
 |---|---|---|
@@ -664,12 +673,10 @@ Applicable a chaque capteur de `dailySensors`: `conso_all_eim`, `conso_net_eim`,
 
 | Champ | Origine / Calcul | Description |
 |---|---|---|
-| `edf_import_whLifetime` | MQTT (topic `sensors.edf_meter.topic`), champ `EAST.value` (index Linky), lu directement (aucune correction) | Energie importee cumulee du reseau, mesuree avant la scission maison/tableau ext — deja "vraie" nativement. Expose a HA (whLifetime/kwhLifetime) |
-| `edf_import_kwhLifetime` | Idem en kWh | Idem en kWh |
-| `eco_edf_whLifetime` | Calcule: `conso_all_eim_whLifetime - edf_import_whLifetime`, **sans clamp** (voir 6.4) | Interne uniquement (non expose a HA): decalage d'origine arbitraire entre les deux compteurs, valeur absolue sans signification physique — seul `eco_edf_today`/`_yesterday` (deja correctement bornes) sont exposes |
-| `eco_edf_kwhLifetime` | Idem en kWh | Interne uniquement, meme raison |
-| `togrid_edf_whLifetime` | Calcule: `prod_eim_whLifetime - eco_edf_whLifetime`, **sans clamp** (voir 6.4) | Interne uniquement (non expose a HA), meme raison que `eco_edf_whLifetime` |
-| `togrid_edf_kwhLifetime` | Idem en kWh | Interne uniquement, meme raison |
+| `edf_import_whLifetime` | MQTT (topic `sensors.edf_meter.topic`), champ `EAST.value` (index Linky), lu directement (aucune correction) | Energie importee cumulee du reseau, mesuree avant la scission maison/tableau ext — deja "vraie" nativement. Expose a HA |
+| `edf_import_kwhLifetime` | Sensor HA virtuel: `source_field: "edf_import_whLifetime"`, `value_template` /1000 | Affichage kWh, non publie sur MQTT |
+| `eco_edf_whLifetime` | Calcule: `conso_all/whLifetime - edf_import_whLifetime`, **sans clamp** (voir 6.4) | Interne uniquement (non expose a HA, pas de variante kWh): decalage d'origine arbitraire entre les deux compteurs, valeur absolue sans signification physique — seul `eco_edf_today`/`_yesterday` (deja correctement bornes) sont exposes |
+| `togrid_edf_whLifetime` | Calcule: `prod/whLifetime - eco_edf_whLifetime`, **sans clamp** (voir 6.4) | Interne uniquement (non expose a HA, pas de variante kWh), meme raison que `eco_edf_whLifetime` |
 | `eco_edf_today` / `eco_edf_yesterday` | Derives via `calculateDailyValues()` (5.2), clampes a 0 | Energie autoconsommee du jour/de la veille (Wh) — seule grandeur EDF fiable en valeur absolue |
 | `togrid_edf_today` / `togrid_edf_yesterday` | Idem | Energie exportee du jour/de la veille (Wh) |
 
@@ -683,10 +690,10 @@ Applicable a chaque capteur de `dailySensors`: `conso_all_eim`, `conso_net_eim`,
 
 ### 9.9 Capteurs JSON dedies (topics separes)
 
-Repackagent des champs deja documentes ci-dessus, sans nouveau calcul — voir `src/ha/energySensors.js`:
+Repackagent des champs deja documentes ci-dessus, sans nouveau calcul — voir `src/ha/energySensors.js`. Le kWh n'existant plus comme champ MQTT (voir 6.3), `energy` est ici calcule inline (`toKwh()`, `whLifetime / 1000` arrondi a 3 decimales) plutot que lu depuis un champ `*_kwhLifetime`:
 
-- Topic `pv_production`: `energy` (= `prod_eim_kwhLifetime`), `power` (= `prod_eim_wNow`), `facteur_de_puiss` (= `prod_eim_pwrFactor`), `voltage` (= `prod_eim_voltage`), `current` (= `prod_eim_current`)
-- Topic `conso_net`: `energy` (= `conso_net_eim_kwhLifetime`), `energy_flow` (`"consuming"`/`"producing"` selon le signe de `conso_net_eim_wNow`), `power_cons` (= `max(0, conso_net_eim_wNow)`), `power` (= `conso_net_eim_wNow`), `facteur_de_puiss`, `voltage`, `current`
+- Topic `pv_production`: `energy` (= `prod/whLifetime / 1000`), `power` (= `prod/wNow`), `voltage` (= `prod/voltage`), `current` (= `prod/current`)
+- Topic `conso_net`: `energy` (= `conso_net/whLifetime / 1000`), `energy_flow` (`"consuming"`/`"producing"` selon le signe de `conso_net/wNow`), `power_cons` (= `max(0, conso_net/wNow)`), `power` (= `conso_net/wNow`), `voltage`, `current`
 
 ## 10. Cas limites et garanties
 

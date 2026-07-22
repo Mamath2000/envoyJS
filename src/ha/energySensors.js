@@ -1,5 +1,13 @@
 import { createLogger } from "../logger.js";
 
+// kWh n'est jamais publie comme champ MQTT separe (voir envoyDerivedFields.js):
+// ces topics JSON dedies (pv_production/conso_net) le recalculent donc eux-memes
+// depuis le whLifetime correspondant, au lieu de lire un champ kWh inexistant.
+function toKwh(wh) {
+  const n = Number(wh ?? 0);
+  return Number.isFinite(n) ? Number((n / 1000).toFixed(3)) : undefined;
+}
+
 export async function publishEnergySensorDiscovery({ mqtt, baseTopic, name, field, log }) {
   const logger = log ?? createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "ha" });
   const sensorId = name
@@ -42,11 +50,10 @@ export async function publishEnergySensorDiscovery({ mqtt, baseTopic, name, fiel
 export async function publishPvProductionSensors({ mqtt, topic, data, log }) {
   const logger = log ?? createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "ha" });
   const pvData = {
-    energy: data["prod_eim_kwhLifetime"],
-    power: data["prod_eim_wNow"] ?? 0,
-    facteur_de_puiss: data["prod_eim_pwrFactor"],
-    voltage: data["prod_eim_voltage"],
-    current: data["prod_eim_current"],
+    energy: toKwh(data["prod/whLifetime"]),
+    power: data["prod/wNow"] ?? 0,
+    voltage: data["prod/voltage"],
+    current: data["prod/current"],
   };
 
   logger.debug("publish PV sensors", { topic });
@@ -61,16 +68,15 @@ export async function publishPvProductionSensors({ mqtt, topic, data, log }) {
 
 export async function publishConsumptionSensors({ mqtt, topic, data, log }) {
   const logger = log ?? createLogger({ level: process.env.LOG_LEVEL ?? "info", component: "ha" });
-  const wNow = Number(data["conso_net_eim_wNow"] ?? 0);
+  const wNow = Number(data["conso_net/wNow"] ?? 0);
 
   const payload = {
-    energy: data["conso_net_eim_kwhLifetime"],
+    energy: toKwh(data["conso_net/whLifetime"]),
     energy_flow: wNow > 0 ? "consuming" : "producing",
     power_cons: Math.max(0, wNow),
-    power: data["conso_net_eim_wNow"],
-    facteur_de_puiss: data["conso_net_eim_pwrFactor"],
-    voltage: data["conso_net_eim_voltage"],
-    current: data["conso_net_eim_current"],
+    power: data["conso_net/wNow"],
+    voltage: data["conso_net/voltage"],
+    current: data["conso_net/current"],
   };
 
   logger.debug("publish consumption sensors", { topic });

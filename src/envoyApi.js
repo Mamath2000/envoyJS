@@ -417,7 +417,7 @@ export class EnvoyApi {
     Object.assign(processed, this.processReportsConsumptionTotalData(totalConsumption));
     Object.assign(processed, this.processReportsConsumptionNetData(netConsumptionReports));
 
-    processed.prod_eim_wattHoursToday = productionV1Data?.wattHoursToday ?? 0;
+    processed["prod/wattHoursToday"] = productionV1Data?.wattHoursToday ?? 0;
     processed.timestamp = Math.floor(Date.now() / 1000);
     processed.timestamp_text = isoNowSeconds();
 
@@ -426,12 +426,11 @@ export class EnvoyApi {
 
   processMetersProductionData(metersData) {
     const renameMapping = {
-      instantaneousDemand: "prod_eim_wNow",
-      voltage: "prod_eim_voltage",
-      current: "prod_eim_current",
-      pwrFactor: "prod_eim_pwrFactor",
-      actEnergyDlvd: "prod_eim_whLifetime",
-      today: "prod_eim_today",
+      instantaneousDemand: "prod/wNow",
+      voltage: "prod/voltage",
+      current: "prod/current",
+      actEnergyDlvd: "prod/whLifetime",
+      today: "prod/today",
     };
 
     const processed = {};
@@ -440,18 +439,16 @@ export class EnvoyApi {
       if (!renameMapping[key]) continue;
 
       processed[renameMapping[key]] = value;
-      if (key === "actEnergyDlvd") processed.prod_eim_kwhLifetime = Number((value / 1000).toFixed(3));
-      if (key === "instantaneousDemand") processed.prod_eim_wNow_binary = value > 5 ? 1 : 0;
+      if (key === "instantaneousDemand") processed["prod/wNow_binary"] = value > 5 ? 1 : 0;
     }
     return processed;
   }
 
   processMetersNetConsumptionData(metersData) {
     const renameMapping = {
-      instantaneousDemand: "conso_net_eim_wNow",
-      voltage: "conso_net_eim_voltage",
-      current: "conso_net_eim_current",
-      pwrFactor: "conso_net_eim_pwrFactor",
+      instantaneousDemand: "conso_net/wNow",
+      voltage: "conso_net/voltage",
+      current: "conso_net/current",
       // Sur le compteur net-consumption, actEnergyDlvd/actEnergyRcvd sont definis
       // du point de vue du RESEAU (pas de la maison): actEnergyDlvd = delivre PAR
       // le reseau (donc import), actEnergyRcvd = recu PAR le reseau (donc export).
@@ -467,18 +464,16 @@ export class EnvoyApi {
       if (!renameMapping[key]) continue;
 
       processed[renameMapping[key]] = value;
-      if (key === "actEnergyRcvd") processed.grid_eim_kwhLifetime = Number((value / 1000).toFixed(3));
-      if (key === "actEnergyDlvd") processed.import_eim_kwhLifetime = Number((value / 1000).toFixed(3));
     }
     return processed;
   }
 
   processReportsConsumptionTotalData(consumptionData) {
     const renameMapping = {
-      currW: "conso_all_eim_wNow",
-      rmsCurrent: "conso_all_eim_rmsCurrent",
-      rmsVoltage: "conso_all_eim_rmsVoltage",
-      whDlvdCum: "conso_all_eim_whLifetime",
+      currW: "conso_all/wNow",
+      rmsCurrent: "conso_all/rmsCurrent",
+      rmsVoltage: "conso_all/rmsVoltage",
+      whDlvdCum: "conso_all/whLifetime",
     };
 
     const processed = {};
@@ -487,14 +482,13 @@ export class EnvoyApi {
       if (!renameMapping[key]) continue;
 
       processed[renameMapping[key]] = value;
-      if (key === "whDlvdCum") processed.conso_all_eim_kwhLifetime = Number((value / 1000).toFixed(3));
     }
     return processed;
   }
 
   processReportsConsumptionNetData(netConsumptionData) {
     const renameMapping = {
-      whDlvdCum: "conso_net_eim_whLifetime",
+      whDlvdCum: "conso_net/whLifetime",
     };
 
     const processed = {};
@@ -503,7 +497,6 @@ export class EnvoyApi {
       if (!renameMapping[key]) continue;
 
       processed[renameMapping[key]] = value;
-      if (key === "whDlvdCum") processed.conso_net_eim_kwhLifetime = Number((value / 1000).toFixed(3));
     }
     return processed;
   }

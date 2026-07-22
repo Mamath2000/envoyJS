@@ -1,5 +1,5 @@
 {
-  "prod_eim_whLifetime": {
+  "prod/whLifetime": {
     "name": "Lifetime Energy Production",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -7,15 +7,17 @@
     "state_class": "total_increasing",
     "icon": "mdi:flash"
   },
-  "prod_eim_kwhLifetime": {
+  "prod/kwhLifetime": {
     "name": "Lifetime Energy Production (kWh)",
     "platform": "sensor",
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
-    "icon": "mdi:flash"
+    "icon": "mdi:flash",
+    "source_field": "prod/whLifetime",
+    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
-  "prod_eim_wNow": {
+  "prod/wNow": {
     "name": "Current Power Production",
     "platform": "sensor",
     "unit_of_measurement": "W",
@@ -23,7 +25,7 @@
     "state_class": "measurement",
     "icon": "mdi:flash"
   },
-  "prod_eim_wNow_binary": {
+  "prod/wNow_binary": {
     "name": "Current Power Production flag",
     "platform": "binary_sensor",
     "icon": "mdi:flash",
@@ -46,7 +48,9 @@
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
-    "icon": "mdi:flash"
+    "icon": "mdi:flash",
+    "source_field": "import_eim_whLifetime",
+    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
   "grid_eim_whLifetime": {
@@ -63,10 +67,12 @@
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
-    "icon": "mdi:flash"
+    "icon": "mdi:flash",
+    "source_field": "grid_eim_whLifetime",
+    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
-  "conso_net_eim_wNow": {
+  "conso_net/wNow": {
     "name": "Current Energy Net Consumption",
     "platform": "sensor",
     "unit_of_measurement": "W",
@@ -114,10 +120,12 @@
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
-    "icon": "mdi:flash"
+    "icon": "mdi:flash",
+    "source_field": "eco_eim_whLifetime",
+    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
-  "conso_all_eim_wNow": {
+  "conso_all/wNow": {
     "name": "Current Power Consumption",
     "platform": "sensor",
     "unit_of_measurement": "W",
@@ -125,7 +133,7 @@
     "state_class": "measurement",
     "icon": "mdi:flash"
   },
-  "conso_all_eim_whLifetime": {
+  "conso_all/whLifetime": {
     "name": "Lifetime Energy Consumption",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -133,15 +141,17 @@
     "state_class": "total_increasing",
     "icon": "mdi:flash"
   },
-  "conso_all_eim_kwhLifetime": {
+  "conso_all/kwhLifetime": {
     "name": "Lifetime Energy Consumption (kWh)",
     "platform": "sensor",
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
-    "icon": "mdi:flash"
+    "icon": "mdi:flash",
+    "source_field": "conso_all/whLifetime",
+    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
-  "conso_all_eim_rmsVoltage": {
+  "conso_all/rmsVoltage": {
     "name": "Voltage Consumption",
     "platform": "sensor",
     "unit_of_measurement": "V",
@@ -149,7 +159,7 @@
     "state_class": "measurement",
     "icon": "mdi:flash"
   },
-  "conso_all_eim_rmsCurrent": {
+  "conso_all/rmsCurrent": {
     "name": "Current Consumption",
     "platform": "sensor",
     "unit_of_measurement": "A",
@@ -158,7 +168,7 @@
     "icon": "mdi:flash"
   },
 
-  "conso_net_eim_whLifetime": {
+  "conso_net/whLifetime": {
     "name": "Lifetime Energy Net Consumption",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -166,13 +176,15 @@
     "state_class": "total_increasing",
     "icon": "mdi:flash"
   },
-  "conso_net_eim_kwhLifetime": {
+  "conso_net/kwhLifetime": {
     "name": "Lifetime Energy Net Consumption (kWh)",
     "platform": "sensor",
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
-    "icon": "mdi:flash"
+    "icon": "mdi:flash",
+    "source_field": "conso_net/whLifetime",
+    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
   "tableau_elec_wNow": {
@@ -206,7 +218,7 @@
     "value_template": "{{ value }}"
   },
 
-  "conso_all_eim_today": {
+  "conso_all/today": {
     "name": "Today's Energy Consumption",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -214,7 +226,7 @@
     "state_class": "total_increasing",
     "icon": "mdi:counter"
   },
-  "conso_net_eim_today": {
+  "conso_net/today": {
     "name": "Today's Energy Net Consumption",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -222,7 +234,7 @@
     "state_class": "total_increasing",
     "icon": "mdi:counter"
   },
-  "prod_eim_today": {
+  "prod/today": {
     "name": "Today's Energy Production",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -247,7 +259,7 @@
     "icon": "mdi:counter"
   },
 
-  "conso_all_eim_yesterday": {
+  "conso_all/yesterday": {
     "name": "Yesterday Energy Consumption",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -256,7 +268,7 @@
     "icon": "mdi:counter",
     "expire_after": 86405
   },
-  "conso_net_eim_yesterday": {
+  "conso_net/yesterday": {
     "name": "Yesterday Energy Net Consumption",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -265,7 +277,7 @@
     "icon": "mdi:counter",
     "expire_after": 86405
   },
-  "prod_eim_yesterday": {
+  "prod/yesterday": {
     "name": "Yesterday Energy Production",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -307,7 +319,9 @@
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
-    "icon": "mdi:transmission-tower-import"
+    "icon": "mdi:transmission-tower-import",
+    "source_field": "edf_import_whLifetime",
+    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
   "edf_import_today": {
     "name": "Today's Energy Import EDF",

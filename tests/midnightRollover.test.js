@@ -46,13 +46,13 @@ test("le premier appel memorise le jour courant sans declencher de rollover", as
     const { service, publishedTopics } = createService({ midnightReferencesStateFile: stateFilePath });
     service.getNowPartsInTz = () => ({ date: "2026-07-19", hour: 14, minute: 30, second: 0 });
 
-    service.midnightReferences = { conso_all_eim_whLifetime: 1000 };
+    service.midnightReferences = { "conso_all/whLifetime": 1000 };
 
-    await service.checkAndUpdateMidnightReferences({ conso_all_eim_whLifetime: 1200 });
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1200 });
 
     assert.equal(service.lastMidnightCheck, "2026-07-19");
     assert.equal(publishedTopics.length, 0);
-    assert.equal(service.midnightReferences.conso_all_eim_whLifetime, 1000); // inchangé
+    assert.equal(service.midnightReferences["conso_all/whLifetime"], 1000); // inchangé
   } finally {
     fs.rmSync(stateFilePath, { force: true });
   }
@@ -63,13 +63,13 @@ test("aucun rollover tant que la date ne change pas", async () => {
   try {
     const { service, publishedTopics } = createService({ midnightReferencesStateFile: stateFilePath });
     service.getNowPartsInTz = () => ({ date: "2026-07-19", hour: 14, minute: 30, second: 0 });
-    service.midnightReferences = { conso_all_eim_whLifetime: 1000 };
+    service.midnightReferences = { "conso_all/whLifetime": 1000 };
 
-    await service.checkAndUpdateMidnightReferences({ conso_all_eim_whLifetime: 1200 }); // seed
-    await service.checkAndUpdateMidnightReferences({ conso_all_eim_whLifetime: 1300 }); // meme jour
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1200 }); // seed
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1300 }); // meme jour
 
     assert.equal(publishedTopics.length, 0);
-    assert.equal(service.midnightReferences.conso_all_eim_whLifetime, 1000);
+    assert.equal(service.midnightReferences["conso_all/whLifetime"], 1000);
   } finally {
     fs.rmSync(stateFilePath, { force: true });
   }
@@ -82,24 +82,24 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
   try {
     service.getNowPartsInTz = () => ({ date: "2026-07-19", hour: 14, minute: 0, second: 0 });
     service.midnightReferences = {
-      conso_all_eim_whLifetime: 1000,
-      conso_net_eim_whLifetime: 500,
-      prod_eim_whLifetime: 2000,
+      "conso_all/whLifetime": 1000,
+      "conso_net/whLifetime": 500,
+      "prod/whLifetime": 2000,
       grid_eim_whLifetime: 300,
       eco_eim_whLifetime: 700,
     };
 
     // Demarrage du service en milieu de journee: seed sans rollover.
-    await service.checkAndUpdateMidnightReferences({ conso_all_eim_whLifetime: 1200 });
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1200 });
     assert.equal(publishedTopics.length, 0);
 
     // Le prochain cycle de la boucle tombe le lendemain a 14h (intervalle de polling long):
     // le rollover doit quand meme se declencher, sans dependre d'une fenetre d'horloge minuit.
     service.getNowPartsInTz = () => ({ date: "2026-07-20", hour: 14, minute: 0, second: 0 });
     const currentData = {
-      conso_all_eim_whLifetime: 1800,
-      conso_net_eim_whLifetime: 900,
-      prod_eim_whLifetime: 3000,
+      "conso_all/whLifetime": 1800,
+      "conso_net/whLifetime": 900,
+      "prod/whLifetime": 3000,
       grid_eim_whLifetime: 450,
       eco_eim_whLifetime: 1100,
     };
@@ -109,15 +109,15 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
     assert.equal(service.lastMidnightCheck, "2026-07-20");
 
     // "_yesterday" = valeur courante - ancienne reference _00h (au moment de la detection)
-    assert.equal(service.midnightReferences.conso_all_eim_yesterday, 800); // 1800-1000
-    assert.equal(service.midnightReferences.conso_net_eim_yesterday, 400); // 900-500
-    assert.equal(service.midnightReferences.prod_eim_yesterday, 1000); // 3000-2000
+    assert.equal(service.midnightReferences["conso_all/yesterday"], 800); // 1800-1000
+    assert.equal(service.midnightReferences["conso_net/yesterday"], 400); // 900-500
+    assert.equal(service.midnightReferences["prod/yesterday"], 1000); // 3000-2000
     assert.equal(service.midnightReferences.grid_eim_yesterday, 150); // 450-300
     assert.equal(service.midnightReferences.eco_eim_yesterday, 400); // 1100-700
 
     // Nouvelle reference _00h = valeur courante au moment de la detection.
-    assert.equal(service.midnightReferences.conso_all_eim_whLifetime, 1800);
-    assert.equal(service.midnightReferences.conso_net_eim_whLifetime, 900);
+    assert.equal(service.midnightReferences["conso_all/whLifetime"], 1800);
+    assert.equal(service.midnightReferences["conso_net/whLifetime"], 900);
 
     // 5 capteurs journaliers x 2 topics (_yesterday + _00h) + 1 topic last_midnight_check = 11.
     assert.equal(publishedTopics.length, 11);
@@ -135,7 +135,7 @@ test("les references minuit et le dernier jour de rollover sont restaurés depui
     fs.writeFileSync(
       stateFilePath,
       JSON.stringify({
-        midnightReferences: { conso_all_eim_whLifetime: 1000, prod_eim_whLifetime: 2000 },
+        midnightReferences: { "conso_all/whLifetime": 1000, "prod/whLifetime": 2000 },
         lastMidnightCheck: "2026-07-19",
       }),
     );
@@ -144,8 +144,8 @@ test("les references minuit et le dernier jour de rollover sont restaurés depui
     service.loadMidnightReferencesFromDisk();
 
     assert.equal(service.lastMidnightCheck, "2026-07-19");
-    assert.equal(service.midnightReferences.conso_all_eim_whLifetime, 1000);
-    assert.equal(service.midnightReferences.prod_eim_whLifetime, 2000);
+    assert.equal(service.midnightReferences["conso_all/whLifetime"], 1000);
+    assert.equal(service.midnightReferences["prod/whLifetime"], 2000);
   } finally {
     fs.rmSync(stateFilePath, { force: true });
   }
@@ -172,7 +172,7 @@ test("gridEimMonotonicWhLifetime n'est jamais seede depuis une reference _00h ob
     assert.equal(service.midnightReferences.grid_eim_whLifetime, 38_195_247); // charge normalement
     assert.equal(service.gridEimMonotonicWhLifetime, undefined); // mais jamais utilise comme graine
 
-    const out = service.deriveFullData({ grid_eim_whLifetime: 2_400_000, prod_eim_whLifetime: 12_600_000 });
+    const out = service.deriveFullData({ grid_eim_whLifetime: 2_400_000, "prod/whLifetime": 12_600_000 });
     assert.equal(out.grid_eim_whLifetime, 2_400_000); // pas bloqué sur la vieille valeur obsolete
   } finally {
     fs.rmSync(stateFilePath, { force: true });
@@ -200,17 +200,17 @@ test("checkAndUpdateMidnightReferences ecrit le fichier d'etat lors d'un rollove
   try {
     const { service } = createService({ midnightReferencesStateFile: stateFilePath });
     service.getNowPartsInTz = () => ({ date: "2026-07-19", hour: 14, minute: 0, second: 0 });
-    service.midnightReferences = { conso_all_eim_whLifetime: 1000 };
+    service.midnightReferences = { "conso_all/whLifetime": 1000 };
 
-    await service.checkAndUpdateMidnightReferences({ conso_all_eim_whLifetime: 1200 }); // seed, pas de rollover
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1200 }); // seed, pas de rollover
     assert.equal(fs.existsSync(stateFilePath), true); // le seed du jour courant est deja persisté
 
     service.getNowPartsInTz = () => ({ date: "2026-07-20", hour: 14, minute: 0, second: 0 });
-    await service.checkAndUpdateMidnightReferences({ conso_all_eim_whLifetime: 1800 });
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1800 });
 
     const persisted = JSON.parse(fs.readFileSync(stateFilePath, "utf-8"));
     assert.equal(persisted.lastMidnightCheck, "2026-07-20");
-    assert.equal(persisted.midnightReferences.conso_all_eim_whLifetime, 1800);
+    assert.equal(persisted.midnightReferences["conso_all/whLifetime"], 1800);
   } finally {
     fs.rmSync(stateFilePath, { force: true });
   }
