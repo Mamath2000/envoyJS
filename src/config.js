@@ -122,17 +122,16 @@ export function loadConfig() {
     consoNetTopic: String(cfg?.sensors?.conso_net?.topic ?? "envoy/conso_net_energy"),
     consoNetSensorName: String(cfg?.sensors?.conso_net?.name ?? "Conso Nette Energy"),
 
-    tableauElecEnabled: Boolean(cfg?.sensors?.tableau_elec?.enabled ?? false),
-    tableauElecTopic: String(cfg?.sensors?.tableau_elec?.topic ?? "").trim(),
-    tableauElecPowerField:
-      String(cfg?.sensors?.tableau_elec?.power_field ?? cfg?.sensors?.tableau_elec?.json_field ?? "").trim() || undefined,
-    tableauElecIndexField: String(cfg?.sensors?.tableau_elec?.index_field ?? "").trim() || undefined,
-    tableauElecIndexUnit: String(cfg?.sensors?.tableau_elec?.index_unit ?? "auto").trim().toLowerCase(),
-    tableauElecStateFile: String(cfg?.sensors?.tableau_elec?.state_file ?? "").trim() || undefined,
-    tableauElecSign: Number(cfg?.sensors?.tableau_elec?.sign ?? 1),
-
-    edfMeterTopic: String(cfg?.sensors?.edf_meter?.topic ?? "").trim(),
-    edfMeterIndexField: String(cfg?.sensors?.edf_meter?.index_field ?? "EAST.value").trim(),
+    generalMeterTopic: String(cfg?.sensors?.general_meter?.topic ?? "").trim(),
+    generalMeterPowerField: String(cfg?.sensors?.general_meter?.power_field ?? "power").trim() || "power",
+    generalMeterVoltageField: String(cfg?.sensors?.general_meter?.voltage_field ?? "voltage").trim() || "voltage",
+    generalMeterCurrentField: String(cfg?.sensors?.general_meter?.current_field ?? "current").trim() || "current",
+    generalMeterImportIndexField:
+      String(cfg?.sensors?.general_meter?.import_index_field ?? "energy").trim() || "energy",
+    generalMeterExportIndexField:
+      String(cfg?.sensors?.general_meter?.export_index_field ?? "produced_energy").trim() || "produced_energy",
+    generalMeterIndexUnit: String(cfg?.sensors?.general_meter?.index_unit ?? "kwh").trim().toLowerCase(),
+    generalMeterStateFile: String(cfg?.sensors?.general_meter?.state_file ?? "").trim() || undefined,
 
     midnightReferencesStateFile: String(cfg?.state?.midnight_references_file ?? "").trim() || undefined,
 

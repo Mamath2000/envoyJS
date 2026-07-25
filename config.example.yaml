@@ -37,18 +37,15 @@ sensors:
     topic: "envoy/conso_net_energy"
     name: "Conso Nette Energy"
     
-  tableau_elec:
-    enabled: false
-    topic: "zigbee2mqtt/charge_ve"
-    power_field: "power"          # optionnel, ex: "payload.power" si JSON imbriqué
-    index_field: "energy"         # optionnel, index cumulé (kWh ou Wh) du tableau externe
-    index_unit: "kwh"             # "kwh", "wh" ou "auto" (recommandé: fixer explicitement)
-    state_file: "data/tableau-elec-state.json"  # persistance de baseline/index entre redémarrages
-    sign: 1                        # 1 ajoute au net, -1 soustrait
-
-  edf_meter:
-    topic: "teleinfo/022061153159"  # topic MQTT du bridge teleinfo (numero de compteur inclus)
-    index_field: "EAST.value"       # index Wh "Energie Active Soutirée Totale" (import cumulé, jamais decremente)
+  general_meter:
+    topic: "zigbee2mqtt/general"           # capteur bidirectionnel place sur le general
+    power_field: "power"                   # puissance signee instantanee (W), positif = import
+    voltage_field: "voltage"
+    current_field: "current"
+    import_index_field: "energy"           # index cumulé importé
+    export_index_field: "produced_energy"  # index cumulé exporté/injecté ("to_grid")
+    index_unit: "kwh"                      # "kwh", "wh" ou "auto"
+    state_file: "data/general-meter-state.json"  # persistance des baselines/index entre redémarrages
 
 state:
   midnight_references_file: "data/midnight-references-state.json"  # persistance des references _00h/dernier rollover entre redémarrages
