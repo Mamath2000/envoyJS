@@ -49,6 +49,9 @@ sensors:
     # sur le general (en Wh) — jamais recapturé/mis a jour automatiquement.
     import_baseline_wh: 0
     export_baseline_wh: 0
+    # prod/whLifetime (Envoy) au meme instant — usage interne uniquement
+    # (eco/conso_all), n'affecte jamais le champ publié prod/whLifetime.
+    prod_baseline_wh: 0
 
 state:
   midnight_references_file: "data/midnight-references-state.json"  # persistance des references _00h/dernier rollover entre redémarrages

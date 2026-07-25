@@ -20,6 +20,7 @@ function createService({
   generalMeterTopic = "zigbee2mqtt/general",
   generalMeterImportBaselineWh,
   generalMeterExportBaselineWh,
+  prodBaselineWh,
 } = {}) {
   const service = new EnvoyMqttService({
     config: {
@@ -29,6 +30,7 @@ function createService({
       generalMeterPowerField: "power",
       generalMeterImportBaselineWh,
       generalMeterExportBaselineWh,
+      prodBaselineWh,
       highFrequencyIntervalMs: 250,
       timeZoneName: "Europe/Paris",
       logLevel: "silent",
@@ -278,14 +280,14 @@ test("publishRawLoop clampe prod_eim_wNow sous 5W a 0, repercute sur conso_all",
   assert.equal(service.generalMeter.state.lastProdEimWNow, 0);
 });
 
-test("deriveFullData integre conso_net/voltage/current/import/grid/eco/conso_all depuis l'etat du capteur général", () => {
+test("deriveFullData integre conso_net/current/grid/eco/conso_all depuis l'etat du capteur général — voltage et import ne sont plus publiés", () => {
   const { service } = createService({
     generalMeterImportBaselineWh: 1_000_000,
     generalMeterExportBaselineWh: 200_000,
   });
 
   service.generalMeter.state.currentPowerW = 320;
-  service.generalMeter.state.voltageV = 231.5;
+  service.generalMeter.state.voltageV = 231.5; // toujours suivi en interne, plus publié
   service.generalMeter.state.currentA = 1.38;
   service.generalMeter.state.import.energyWh = 5_000;
   service.generalMeter.state.export.energyWh = 1_200;
@@ -293,14 +295,32 @@ test("deriveFullData integre conso_net/voltage/current/import/grid/eco/conso_all
   const out = service.deriveFullData({ "prod/wNow": 1000, "prod/whLifetime": 50_000 });
 
   assert.equal(out["conso_net/wNow"], 320);
-  assert.equal(out["conso_net/voltage"], 231.5);
+  assert.equal(out["conso_net/voltage"], undefined); // rationalisé sur prod/voltage
   assert.equal(out["conso_net/current"], 1.38);
 
-  assert.equal(out["import/whLifetime"], 5_000);
+  assert.equal(out["import/whLifetime"], undefined); // plus de topic/sensor dedié
   assert.equal(out["grid/whLifetime"], 1_200);
   assert.equal(out["eco/whLifetime"], 48_800); // prod(50000) - grid(1200)
-  assert.equal(out["conso_all/whLifetime"], 53_800); // import(5000) + eco(48800)
-  assert.equal(out["conso_net/whLifetime"], 3_800); // import(5000) - grid(1200)
+  assert.equal(out["conso_all/whLifetime"], 53_800); // import(5000, interne) + eco(48800)
+  assert.equal(out["conso_net/whLifetime"], 3_800); // import(5000, interne) - grid(1200)
+});
+
+test("deriveFullData applique prodBaselineWh a eco/conso_all sans toucher au prod/whLifetime publié", () => {
+  const { service } = createService({
+    generalMeterImportBaselineWh: 1_000_000,
+    generalMeterExportBaselineWh: 200_000,
+    prodBaselineWh: 12_726_270,
+  });
+
+  service.generalMeter.state.currentPowerW = 0;
+  service.generalMeter.state.import.energyWh = 1_080;
+  service.generalMeter.state.export.energyWh = 0;
+
+  const out = service.deriveFullData({ "prod/whLifetime": 12_726_270 });
+
+  assert.equal(out["prod/whLifetime"], 12_726_270); // inchangé, valeur absolue Envoy
+  assert.equal(out["eco/whLifetime"], 0); // (12_726_270 - 12_726_270) - export(0)
+  assert.equal(out["conso_all/whLifetime"], 1_080); // import(1080) + eco(0)
 });
 
 test("deriveFullData ne produit aucun champ derive du capteur général tant qu'aucune baseline n'est configurée", () => {

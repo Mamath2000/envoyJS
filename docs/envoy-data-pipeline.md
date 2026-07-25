@@ -259,14 +259,14 @@ Reference code:
 
 ### 4.3 Sortie deriveEnvoyFields
 
-Fonction pure (src/envoyDerivedFields.js) qui prend l'objet brut de `getAllEnvoyData()` plus une correction optionnelle `{ signedPowerW, energyOffsetWh, edfImportWhLifetime }` (nulle par defaut) et renvoie l'objet final publie, en un seul passage de calcul:
+Fonction pure (src/envoyDerivedFields.js) qui prend l'objet brut de `getAllEnvoyData()` plus une correction optionnelle `{ signedPowerW, energyOffsetWh }` (nulle par defaut) et renvoie l'objet final publie, en un seul passage de calcul:
 
 - champs bruts recopies tels quels
 - conso_net/wNow / conso_all/wNow decales de `signedPowerW`
 - grid/wNow, grid/wNow_binary, eco/wNow calcules a partir du net corrige
 - conso_net/current recalcule via I = P / U
 - conso_net/whLifetime et conso_all/whLifetime decales de `energyOffsetWh`
-- import/whLifetime, grid/whLifetime et eco/whLifetime deduits du compteur EDF par conservation d'energie (voir 6.4) — plus de clamp/monotonie a gerer ici, contrairement a l'ancienne approche basee sur le TOR (retiree, voir historique 6.3)
+- grid/whLifetime et eco/whLifetime deduits par conservation d'energie — plus de clamp/monotonie a gerer ici, contrairement a l'ancienne approche basee sur le TOR (retiree, voir historique 6.3)
 - aucun champ `*_kwhLifetime` n'est produit: le kWh n'est jamais publie comme champ MQTT separe, voir 6.3 "Champs kWh"
 
 Reference code:
@@ -283,7 +283,7 @@ A partir de la puissance nette corrigee (`correctedNetPowerW`, apres application
 - grid/wNow_binary = 1 si correctedNetPowerW > 0 sinon 0
 - eco/wNow = prodDemand + correctedNetPowerW si correctedNetPowerW < 0 sinon prodDemand
 
-Ces trois champs restent bases sur le TOR (pas d'equivalent EDF: `EAST` n'est qu'un index Wh, pas une puissance instantanee). Le cumul lifetime (`grid/whLifetime`, `eco/whLifetime`), lui, est calcule par conservation d'energie a partir du compteur EDF — voir 6.4.
+Ces trois champs restent bases sur le TOR. Le cumul lifetime (`grid/whLifetime`, `eco/whLifetime`), lui, est calcule par conservation d'energie — voir 6.4.
 
 Ce calcul tourne desormais systematiquement dans `deriveEnvoyFields()`, tableau elec actif ou non (correction nulle dans ce dernier cas — voir 6.3).
 
@@ -337,8 +337,7 @@ Points cles de cette topologie (voir aussi 6.3, 6.4 et 9.4):
 - Le sensor de **production** Envoy est place directement apres les panneaux: il mesure toute la production solaire, sans exception — fiable, jamais besoin de correction.
 - Le sensor **net-consumption** Envoy (TOR) est place entre la maison et le reseau: il voit tout ce que la maison importe/exporte, mais **pas** ce qui se passe sur le tableau ext (aveugle a cette branche, comme s'il n'existait pas).
 - Le **tableau ext** a son propre sensor (puissance + index cumule), place en amont de la borne de recharge voiture. Il peut consommer du solaire (branche sur le meme bus de production, avant le sensor net-consumption) aussi bien que du reseau, sans que ni le sensor de production ni le sensor net-consumption ne le voient directement. Il ne fait que consommer/importer, jamais exporter.
-- Le **compteur EDF** (Linky, teleinfo) est place **avant** la scission maison/tableau ext, entre le reseau et les deux — contrairement au TOR, il voit deja le vrai import combine des deux reseaux, mais uniquement l'import (il ne comptabilise rien quand la production depasse la consommation instantanee). Voir 6.4.
-- Consequence pratique: la consommation du tableau ext (`tableau_ext/whOffset`, alias `energyOffsetWh`) doit etre reintegree manuellement dans les calculs bases sur le TOR (conso, voir 6.3/9.4) — mais **pas** dans ceux bases sur le compteur EDF, qui la voit deja nativement (voir 6.4).
+- Consequence pratique: la consommation du tableau ext (`tableau_ext/whOffset`, alias `energyOffsetWh`) doit etre reintegree manuellement dans les calculs bases sur le TOR (conso, voir 6.3/9.4).
 
 Configuration:
 
@@ -407,7 +406,7 @@ Reference code:
 
 Le principe est bien celui que tu decris: le tableau deporte sert a corriger un ecart sur les donnees Envoy.
 
-Depuis la refonte, la correction n'est plus appliquee "apres coup" sur un objet deja calcule: `EnvoyMqttService.getExternalCorrections()` (src/mqttService.js:986) resout `{ signedPowerW, energyOffsetWh, edfImportWhLifetime }` a partir de l'etat courant du tableau elec (0 si desactive) et du compteur EDF (voir 6.4), puis `deriveFullData()` (src/mqttService.js:1002) transmet cette correction a `deriveEnvoyFields()` en un seul appel — c'est cette meme fonction qui calcule aussi bien les champs de base (5.1) que les corrections, il n'y a plus de double calcul.
+Depuis la refonte, la correction n'est plus appliquee "apres coup" sur un objet deja calcule: `EnvoyMqttService.getExternalCorrections()` (src/mqttService.js:986) resout `{ signedPowerW, energyOffsetWh }` a partir de l'etat courant du tableau elec (0 si desactive), puis `deriveFullData()` (src/mqttService.js:1002) transmet cette correction a `deriveEnvoyFields()` en un seul appel — c'est cette meme fonction qui calcule aussi bien les champs de base (5.1) que les corrections, il n'y a plus de double calcul.
 
 Le code applique les corrections suivantes (dans src/envoyDerivedFields.js).
 
@@ -430,27 +429,23 @@ Correction energie cumulative (Wh) via index differentiel uniquement — le kWh 
 - conso_net/whLifetime = conso_net/whLifetime_envoy + energyOffsetWh
 - conso_all/whLifetime = conso_all/whLifetime_envoy + energyOffsetWh
 
-Il n'y a plus de correction TOR sur l'import: `import/whLifetime` (voir 6.4/9.7) vient directement du compteur EDF, qui voit deja l'import reel (tableau ext compris), sans avoir besoin d'aucune correction `energyOffsetWh`.
-
 #### Champs kWh: jamais publies, calcules a l'affichage cote Home Assistant
 
 `deriveEnvoyFields()` ne produit plus aucun champ `*_kwhLifetime`: seul le Wh est calcule/publie sur MQTT (`data/<champ>/whLifetime`). Le kWh n'est jamais qu'un `/1000` du Wh — le dupliquer comme second champ MQTT n'apportait rien et risquait de desynchroniser Wh/kWh si une seule des deux valeurs etait mise a jour.
 
-A la place, `src/device-def/sensors-def.json` declare des sensors HA "virtuels": une entree comme `prod/kwhLifetime` porte un `source_field: "prod/whLifetime"` et son propre `value_template: "{{ (value | float(default=0) / 1000) | round(3) }}"`. `publishHaAutodiscoveryDynamic()` (src/ha/discovery.js) resout ces definitions en s'abonnant au **topic Wh** (`source_field`) mais en publiant sa propre config de decouverte (nom, `unique_id`, `unit_of_measurement: kWh`, `value_template` /1000) — HA affiche donc un capteur kWh a jour en temps reel, sans qu'aucun octet supplementaire ne soit publie sur MQTT. Concerne: `prod`, `conso_net`, `conso_all`, `grid`, `eco`, `import` (tous les `*_kwhLifetime` de `sensors-def.json`, voir 9).
+A la place, `src/device-def/sensors-def.json` declare des sensors HA "virtuels": une entree comme `prod/kwhLifetime` porte un `source_field: "prod/whLifetime"` et son propre `value_template: "{{ (value | float(default=0) / 1000) | round(3) }}"`. `publishHaAutodiscoveryDynamic()` (src/ha/discovery.js) resout ces definitions en s'abonnant au **topic Wh** (`source_field`) mais en publiant sa propre config de decouverte (nom, `unique_id`, `unit_of_measurement: kWh`, `value_template` /1000) — HA affiche donc un capteur kWh a jour en temps reel, sans qu'aucun octet supplementaire ne soit publie sur MQTT. Concerne: `prod`, `conso_net`, `conso_all`, `grid`, `eco` (tous les `*_kwhLifetime` de `sensors-def.json`, voir 9).
 
 #### Historique: pourquoi grid_eim/eco_eim (bases TOR) ont ete retires
 
 Jusqu'a une refonte recente, `grid_eim_whLifetime` (mappe depuis `actEnergyRcvd`, export) et `eco_eim_whLifetime` (= `prod - grid_eim`) etaient calcules a partir du TOR, avec une correction par soustraction de `energyOffsetWh`. Probleme: cette soustraction combinait deux **cumuls absolus** dont la relation dependait de l'instant precis ou chaque delta s'etait produit (le TOR exportait-il ou importait-il *au moment ou* le tableau ext consommait ?) — l'information etait perdue des qu'on raisonnait en cumuls plutot qu'en deltas au meme instant. Ca necessitait un clamp monotone couteux a maintenir (`previousGridEimWhLifetime`, seede a chaque cycle depuis `this.gridEimMonotonicWhLifetime`) pour empecher `grid_eim_whLifetime` de redescendre — et malgre ca, un bug de seeding depuis une reference `_00h` obsolete a deja cause un incident reel (2026-07-22).
 
-`grid`/`eco` (whLifetime) sont desormais **entierement** derives du compteur EDF par conservation d'energie (voir 6.4) — une identite lineaire toujours vraie, sans dependre de l'instant precis d'export/import, donc sans besoin de clamp. Consequence: `grid_eim`/`eco_eim` (whLifetime, kwhLifetime, today, yesterday) ont disparu; seules les puissances instantanees (`grid/wNow`, `grid/wNow_binary`, `eco/wNow`, 5.1) restent basees sur le TOR, faute d'equivalent instantane cote EDF (`EAST` n'est qu'un index Wh, pas une puissance).
+`grid`/`eco` (whLifetime) sont desormais derives par conservation d'energie — une identite lineaire toujours vraie, sans dependre de l'instant precis d'export/import, donc sans besoin de clamp. Consequence: `grid_eim`/`eco_eim` (whLifetime, kwhLifetime, today, yesterday) ont disparu; seules les puissances instantanees (`grid/wNow`, `grid/wNow_binary`, `eco/wNow`, 5.1) restent basees sur le TOR.
 
-`import_eim_whLifetime` (mappe depuis `actEnergyDlvd`, corrige `+= energyOffsetWh`) a ete retire pour la meme raison: c'etait le pendant TOR de `import/whLifetime`, verifie inutilise ailleurs dans le code (aucun calcul en aval ne le consommait, juste publie tel quel a HA) — supprime plutot que renomme.
-
-**Limite a connaitre**: `import/whLifetime`, `grid/whLifetime`, `eco/whLifetime` dependent entierement du compteur EDF — le compteur ne peut plus etre desactive (voir 6.4, plus de `sensors.edf_meter.enabled`), mais tant qu'aucun payload teleinfo n'a encore ete recu (ex: juste apres le demarrage du service, ou `sensors.edf_meter.topic` mal configure), `edfImportWhLifetime` reste `undefined` et ces trois champs (et leurs `today`/`yesterday`) ne sont simplement pas produits pour ce cycle (voir le garde-fou `Number.isFinite(edfImportWhLifetime)` dans `deriveEnvoyFields()`). Contrairement a l'ancienne version, il n'y a plus de repli sur le TOR.
+`import_eim_whLifetime` (mappe depuis `actEnergyDlvd`, corrige `+= energyOffsetWh`) a ete retire pour la meme raison: verifie inutilise ailleurs dans le code (aucun calcul en aval ne le consommait, juste publie tel quel a HA) — supprime plutot que renomme.
 
 Reference code:
 
-- src/envoyDerivedFields.js (bloc `edfImportWhLifetime` — calcul grid/eco, voir 6.4)
+- src/envoyDerivedFields.js
 - src/ha/discovery.js (sensors HA virtuels kWh via source_field)
 
 Impact sur les calculs journaliers:
@@ -476,58 +471,8 @@ References code:
 
 - src/envoyDerivedFields.js:6 (deriveEnvoyFields — toutes les formules ci-dessus)
 - src/mqttService.js:894 (updateTableauElecIndexOffset — detection/confirmation de reset)
-- src/mqttService.js:986 (getExternalCorrections — resolution de signedPowerW/energyOffsetWh/edfImportWhLifetime)
+- src/mqttService.js:986 (getExternalCorrections — resolution de signedPowerW/energyOffsetWh)
 - src/mqttService.js:1002 (deriveFullData — appel unique + ajout de tableau_ext/wNow, tableau_ext/whOffset)
-
-### 6.4 Compteur EDF (Linky, teleinfo)
-
-Source de calcul de `grid`/`eco` (whLifetime, voir 6.3) — le compteur EDF a remplace l'ancienne approche basee sur le TOR (`grid_eim`/`eco_eim`, retiree, voir 6.3 "Historique").
-
-#### Pourquoi le compteur EDF plutot que le TOR
-
-L'ancienne approche corrigeait `grid_eim`/`eco_eim` en soustrayant `energyOffsetWh` (cumul du tableau ext) d'un index brut TOR — mais cette soustraction combinait deux **cumuls absolus** dont la relation dependait de l'instant precis ou chaque delta s'etait produit (le TOR exportait-il ou importait-il *au moment ou* le tableau ext consommait ?). Cette information est perdue des qu'on raisonne en cumuls plutot qu'en deltas au meme instant — d'ou le clamp monotone qu'il fallait maintenir (retire, voir 6.3).
-
-Le compteur EDF (index `EAST`, "energie active soutiree totale") est place **avant** la scission maison/tableau ext (voir 6.0): il voit deja le vrai import combine des deux reseaux, nativement, sans avoir besoin d'aucune correction pour le tableau ext. Sa seule contrainte: il ne comptabilise que l'import (rien quand la production instantanee depasse la consommation instantanee).
-
-Avec cette donnee, `eco`/`grid` (export, alias "to_grid") se deduisent par une identite de conservation d'energie — toujours vraie, sans condition, contrairement a la correction TOR ci-dessus:
-
-```
-import/whLifetime = correction.edfImportWhLifetime (lu directement, aucune correction)
-eco/whLifetime     = conso_all/whLifetime − import/whLifetime
-grid/whLifetime    = prod/whLifetime − eco/whLifetime
-```
-
-**Volontairement pas de `max(0, ...)` ici**: `conso_all/whLifetime` et `import/whLifetime` (EAST) ne partent pas du meme "zero" — le compteur Linky compte depuis sa propre installation, generalement bien avant que ce logiciel ne suive `conso_all`. La difference absolue peut donc etre negative (observe en pratique: incident du 2026-07-23), sans aucune signification physique en tant que "total depuis toujours" — mais ce decalage arbitraire est **constant** et s'annule dans n'importe quel delta. Consequence: `eco/whLifetime`/`grid/whLifetime` sont **naturellement monotones dans le temps** (a chaque instant, une hausse de consommation vient forcement soit de l'import soit de l'autoconsommation solaire — `Δeco(t) = Δconso_all(t) − Δimport(t) >= 0`, toujours vrai physiquement, et par symetrie `Δgrid(t) = Δprod(t) − Δeco(t) >= 0`) — aucun clamp n'est donc necessaire, contrairement a l'ancienne approche TOR. Leur **valeur absolue n'a de sens qu'en delta** (`_today`/`_yesterday`, voir 5.2), pas en `whLifetime` brut isole — mais contrairement a l'ancien `eco_edf`/`togrid_edf`, `eco`/`grid` sont desormais exposes a Home Assistant en `whLifetime` (et `kwhLifetime` virtuel) en plus de `today`/`yesterday`, car ce sont maintenant les seules sources de ces grandeurs (voir 9.4).
-
-#### Format de payload et configuration
-
-Payload teleinfo typique (un champ par etiquette Linky, cf. exemple reel):
-
-```json
-{ "EAST": { "raw": "064477430", "value": 64477430 }, "...": "..." }
-```
-
-Configuration (`config.yaml`):
-
-```yaml
-sensors:
-  edf_meter:
-    topic: "teleinfo/022061153159"  # topic MQTT du bridge teleinfo (numero de compteur inclus)
-    index_field: "EAST.value"       # chemin (notation point) vers l'index Wh dans le payload
-```
-
-Pas de flag `enabled`: le compteur EDF est desormais une dependance obligatoire (source unique de `grid`/`eco`, voir 6.3) — seul le `topic` determine s'il est effectivement souscrit.
-
-`index_field` est resolu via `extractByPath()` (meme mecanisme que `tableau_elec.power_field`/`index_field`, notation point dans un JSON imbrique).
-
-#### Protection anti-glitch (simplifiee, pas la machinerie complete du tableau ext)
-
-`EAST` est un registre materiel Linky (jamais remplace en pratique, contrairement a un capteur DIY) — `updateEdfMeterImport()` se contente donc d'ignorer une baisse isolee (frame teleinfo corrompu) plutot que d'appliquer la confirmation sur 3 lectures utilisee pour le tableau ext (6.3): si la nouvelle valeur est inferieure a la derniere connue, elle est rejetee et la derniere valeur connue est conservee telle quelle, sans etat "en attente".
-
-Reference code:
-
-- src/envoyDerivedFields.js (bloc `edfImportWhLifetime` — calcul grid/eco)
-- src/mqttService.js (`updateEdfMeterImport`, `getExternalCorrections`, souscription dans `installMqttListeners`)
 
 ## 7. Mode haute frequence
 
@@ -563,7 +508,7 @@ Reference code:
 - base/serial/data/*_yesterday (retained)
 - base/serial/data/last_midnight_check (retained, technique — dernier jour de rollover, voir 5.2)
 
-**Convention de nommage `prod`/`conso_all`/`conso_net`/`grid`/`eco`/`import`/`tableau_ext`**: ces familles ne portent pas le suffixe `_eim` contrairement aux autres champs Envoy, et sont publiees sous un sous-topic dedie plutot qu'un nom de champ plat: `base/serial/data/prod/whLifetime`, `base/serial/data/conso_all/whLifetime`, `base/serial/data/conso_net/wNow`, `base/serial/data/grid/whLifetime`, `base/serial/data/eco/whLifetime`, `base/serial/data/import/whLifetime`, `base/serial/data/tableau_ext/wNow`, etc. (le nom de champ interne contient directement le `/`). Raison: une fois passees par `deriveEnvoyFields()`/`deriveFullData()`, ces valeurs sont recopiees/corrigees ou entierement recalculees (`+= signedPowerW`/`energyOffsetWh` pour `conso_all`/`conso_net`, conservation d'energie via le compteur EDF pour `grid`/`eco`/`import`, calcul direct depuis l'etat tableau ext pour `tableau_ext`) — ce ne sont plus de simples alias d'un compteur `eim` d'Envoy, le suffixe n'aurait donc plus de sens. A l'inverse, `getRawData()` (8.3) garde `prod_eim_wNow`/`conso_all_eim_wNow`/`conso_net_eim_wNow`: c'est une lecture brute, non corrigee, ou `eim` reste exact. `grid_eim`/`eco_eim`/`import_eim` (bases TOR) ont tous ete entierement retires (aucun n'etait plus utilise en aval une fois `grid`/`eco`/`import` bases sur l'EDF), voir 6.3 "Historique".
+**Convention de nommage `prod`/`conso_all`/`conso_net`/`grid`/`eco`/`tableau_ext`**: ces familles ne portent pas le suffixe `_eim` contrairement aux autres champs Envoy, et sont publiees sous un sous-topic dedie plutot qu'un nom de champ plat: `base/serial/data/prod/whLifetime`, `base/serial/data/conso_all/whLifetime`, `base/serial/data/conso_net/wNow`, `base/serial/data/grid/whLifetime`, `base/serial/data/eco/whLifetime`, `base/serial/data/tableau_ext/wNow`, etc. (le nom de champ interne contient directement le `/`). Raison: une fois passees par `deriveEnvoyFields()`/`deriveFullData()`, ces valeurs sont recopiees/corrigees ou entierement recalculees (`+= signedPowerW`/`energyOffsetWh` pour `conso_all`/`conso_net`, conservation d'energie pour `grid`/`eco`, calcul direct depuis l'etat tableau ext pour `tableau_ext`) — ce ne sont plus de simples alias d'un compteur `eim` d'Envoy, le suffixe n'aurait donc plus de sens. A l'inverse, `getRawData()` (8.3) garde `prod_eim_wNow`/`conso_all_eim_wNow`/`conso_net_eim_wNow`: c'est une lecture brute, non corrigee, ou `eim` reste exact. `grid_eim`/`eco_eim`/`import_eim` (bases TOR) ont tous ete entierement retires, voir 6.3 "Historique".
 
 **Pas de champ `*_kwhLifetime`**: le kWh n'est jamais publie comme champ MQTT — seul le Wh (`whLifetime`) l'est. Le kWh est calcule a l'affichage par Home Assistant via un sensor "virtuel" (`source_field` + `value_template` de division par 1000, voir `src/device-def/sensors-def.json` et 6.3 "Champs kWh").
 
@@ -589,9 +534,8 @@ Actif seulement si `logging.level` (ou `LOG_LEVEL`) vaut `debug`. A chaque cycle
 - base/serial/debug/consumption_reports (retained) — reponse brute de `/ivp/meters/reports/consumption` (voir 3.3)
 - base/serial/debug/production_v1 (retained) — reponse brute de `/api/v1/production` (voir 3.4)
 - base/serial/debug/tableau_ext (retained, uniquement si tableau_elec active) — dernier payload MQTT brut recu du capteur externe, tel quel (avant `parseTableauElecPayload()`, voir 6.1)
-- base/serial/debug/edf_meter (retained) — dernier payload teleinfo brut recu, tel quel (avant extraction de `EAST.value`, voir 6.4)
 
-`meters_info` ne change qu'au rythme du cache (`EnvoyApi.METERS_INFO_CACHE_TTL_MS`, 6h par defaut — voir 3.1): la valeur republiee peut donc etre agee de plusieurs heures, ce n'est pas un payload frais a chaque cycle. `tableau_ext`/`edf_meter` ne sont publies que si un payload a deja ete recu au moins une fois depuis le demarrage du service.
+`meters_info` ne change qu'au rythme du cache (`EnvoyApi.METERS_INFO_CACHE_TTL_MS`, 6h par defaut — voir 3.1): la valeur republiee peut donc etre agee de plusieurs heures, ce n'est pas un payload frais a chaque cycle. `tableau_ext` n'est publie que si un payload a deja ete recu au moins une fois depuis le demarrage du service.
 
 Reference code:
 

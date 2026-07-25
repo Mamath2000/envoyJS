@@ -4,10 +4,9 @@
  * un seul passage de calcul.
  *
  * `inputs` n'est plus une "correction" au sens strict: conso_net (wNow,
- * voltage, current) et import/grid/eco/conso_all (whLifetime) sont
- * directement sources depuis le capteur general — il n'y a plus rien a
- * corriger sur ces champs, contrairement a l'ancienne approche TOR + offset
- * (tableau elec, retiré).
+ * current) et grid/eco/conso_all (whLifetime) sont directement sources
+ * depuis le capteur general — il n'y a plus rien a corriger sur ces champs,
+ * contrairement a l'ancienne approche TOR + offset (tableau elec, retiré).
  *
  * Aucun champ kWh n'est calcule ici: le kWh est toujours simplement le Wh /
  * 1000, donc affiche cote Home Assistant via un value_template sur le topic
@@ -34,9 +33,9 @@ export function deriveEnvoyFields(rawFields, inputs = {}) {
   // Capteur général (zigbee bidirectionnel, place sur le general — meme point
   // que le compteur EDF): il voit l'integralite du flux reseau de
   // l'installation (maison + ex-tableau ext), en instantane comme en cumule.
-  // conso_net/wNow, voltage, current en viennent desormais directement — plus
-  // besoin du TOR net-consumption Envoy (aveugle au tableau ext) ni du calcul
-  // I = P/U (le capteur remonte son propre courant mesure).
+  // conso_net/wNow et current en viennent desormais directement — plus besoin
+  // du TOR net-consumption Envoy (aveugle au tableau ext) ni du calcul I =
+  // P/U (le capteur remonte son propre courant mesure).
   const generalMeterPowerW = Number(inputs.generalMeterPowerW);
   if (Number.isFinite(generalMeterPowerW)) {
     const netPowerW = Math.round(generalMeterPowerW);
@@ -51,11 +50,9 @@ export function deriveEnvoyFields(rawFields, inputs = {}) {
     }
   }
 
-  const generalMeterVoltageV = Number(inputs.generalMeterVoltageV);
-  if (Number.isFinite(generalMeterVoltageV)) {
-    adjusted["conso_net/voltage"] = generalMeterVoltageV;
-  }
-
+  // Un seul champ voltage suffit cote HA (prod/voltage, Envoy — toujours
+  // fiable, jamais besoin de correction, voir sensors-def.json): pas de
+  // conso_net/voltage distinct a maintenir.
   const generalMeterCurrentA = Number(inputs.generalMeterCurrentA);
   if (Number.isFinite(generalMeterCurrentA)) {
     adjusted["conso_net/current"] = Number(generalMeterCurrentA.toFixed(3));
@@ -64,26 +61,40 @@ export function deriveEnvoyFields(rawFields, inputs = {}) {
   // Index energie
   const prodWhLifetime = Number(adjusted["prod/whLifetime"]);
 
+  // prod/whLifetime (publié tel quel ci-dessus, jamais modifié: c'est la vraie
+  // valeur absolue depuis l'installation des panneaux) vit depuis bien plus
+  // longtemps que les nouveaux index du capteur general (baselinés a la pose,
+  // donc proches de 0). Pour que eco/conso_all restent coherents avec des
+  // index tout juste rebaselinés plutot que domines par ce gros nombre, on
+  // utilise ici une version elle aussi rebaselinée de prod (memes principes
+  // que le capteur general — constante de config, jamais recapturée), sans
+  // jamais toucher au champ publié prod/whLifetime lui-meme.
+  const prodBaselineWh = Number(inputs.prodBaselineWh);
+  const prodWhLifetimeSinceReset =
+    Number.isFinite(prodBaselineWh) && Number.isFinite(prodWhLifetime)
+      ? prodWhLifetime - prodBaselineWh
+      : prodWhLifetime;
+
   // Capteur général — index cumules (import/export): deux registres materiels
   // independants, chacun avec une baseline fixe configurée a la pose du
   // capteur sur le general (sensors.general_meter.*_baseline_wh, voir
   // mqttService.applyGeneralMeterReading — simple soustraction brut -
   // baseline, jamais recapturée automatiquement).
   //
-  // import/whLifetime est lu directement (aucune correction a appliquer,
-  // contrairement a l'ancien TOR). grid/whLifetime (export/"to_grid") est lu
-  // directement lui aussi — nouveaute par rapport a l'ancienne approche EDF,
-  // qui ne mesurait que l'import et devait deduire l'export d'une conservation
-  // a un seul terme. eco/whLifetime (autoconsommation) se deduit par
-  // conservation d'energie a partir de deux grandeurs desormais fiables et non
-  // affectees par le tableau ext (prod, jamais aveugle a rien, et grid/export,
-  // mesure directement au meme point que le compteur EDF): ce qui est produit
-  // = ce qui est autoconsomme + ce qui est exporte.
+  // generalMeterImportWhLifetime n'est plus publié comme champ a part
+  // (data/import/*, HA "sensor" retiré — inutile a l'usage): il ne sert plus
+  // qu'en interne, pour conso_all/conso_net ci-dessous. grid/whLifetime
+  // (export/"to_grid") reste lu directement et publié. eco/whLifetime
+  // (autoconsommation) se deduit par conservation d'energie a partir de deux
+  // grandeurs desormais fiables et non affectees par le tableau ext (prod,
+  // jamais aveugle a rien, et grid/export, mesure directement au meme point
+  // que l'ancien compteur EDF): ce qui est produit = ce qui est autoconsomme
+  // + ce qui est exporte.
   //
-  // Pas de clamp a 0 ici, volontairement: prod/whLifetime (Envoy) et
-  // grid/whLifetime (capteur general) ne partent pas du meme "zero" (le
-  // capteur general a ete rebaseline a la pose, l'Envoy compte depuis sa
-  // propre mise en service) — la difference absolue peut donc etre negative,
+  // Pas de clamp a 0 ici, volontairement: meme avec prodBaselineWh configurée,
+  // rien ne garantit que la baseline prod et celles du capteur general aient
+  // ete relevées exactement au meme instant (et prodBaselineWh peut tout
+  // simplement etre absente) — la difference absolue peut donc etre negative,
   // sans aucune signification physique en tant que "total depuis toujours".
   // Ce qui compte, et qui reste correct malgre ce decalage arbitraire, c'est
   // le delta entre deux instants (_today/_yesterday, via _00h): ce decalage
@@ -94,16 +105,13 @@ export function deriveEnvoyFields(rawFields, inputs = {}) {
   // bloques a 0 (meme classe d'incident que celui observe le 2026-07-23 avec
   // l'ancienne approche EDF).
   const generalMeterImportWhLifetime = Number(inputs.generalMeterImportWhLifetime);
-  if (Number.isFinite(generalMeterImportWhLifetime)) {
-    adjusted["import/whLifetime"] = Math.round(generalMeterImportWhLifetime);
-  }
 
   const generalMeterExportWhLifetime = Number(inputs.generalMeterExportWhLifetime);
   if (Number.isFinite(generalMeterExportWhLifetime)) {
     adjusted["grid/whLifetime"] = Math.round(generalMeterExportWhLifetime);
 
-    if (Number.isFinite(prodWhLifetime)) {
-      adjusted["eco/whLifetime"] = Math.round(prodWhLifetime - generalMeterExportWhLifetime);
+    if (Number.isFinite(prodWhLifetimeSinceReset)) {
+      adjusted["eco/whLifetime"] = Math.round(prodWhLifetimeSinceReset - generalMeterExportWhLifetime);
 
       // conso_all/whLifetime ("consommation totale du foyer, tous circuits"):
       // meme conservation, un terme de plus. Ce qui est consomme = ce qui est

@@ -36,7 +36,6 @@ export class EnvoyMqttService {
       "conso_all/whLifetime",
       "conso_net/whLifetime",
       "prod/whLifetime",
-      "import/whLifetime",
       "eco/whLifetime",
       "grid/whLifetime",
     ];
@@ -771,10 +770,10 @@ export class EnvoyMqttService {
 
     return {
       generalMeterPowerW: this.generalMeter.state.currentPowerW,
-      generalMeterVoltageV: this.generalMeter.state.voltageV,
       generalMeterCurrentA: this.generalMeter.state.currentA,
       generalMeterImportWhLifetime: Number.isFinite(importState.baselineWh) ? importState.energyWh : undefined,
       generalMeterExportWhLifetime: Number.isFinite(exportState.baselineWh) ? exportState.energyWh : undefined,
+      prodBaselineWh: this.config.prodBaselineWh,
     };
   }
 

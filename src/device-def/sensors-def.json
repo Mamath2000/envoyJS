@@ -33,6 +33,14 @@
     "payload_on": 1,
     "payload_off": 0
   },
+  "prod/voltage": {
+    "name": "Voltage",
+    "platform": "sensor",
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "state_class": "measurement",
+    "icon": "mdi:flash"
+  },
 
   "grid/whLifetime": {
     "name": "Lifetime Energy to Grid",
@@ -131,14 +139,6 @@
     "icon": "mdi:flash",
     "source_field": "conso_all/whLifetime",
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
-  },
-  "conso_all/rmsVoltage": {
-    "name": "Voltage Consumption",
-    "platform": "sensor",
-    "unit_of_measurement": "V",
-    "device_class": "voltage",
-    "state_class": "measurement",
-    "icon": "mdi:flash"
   },
   "conso_all/rmsCurrent": {
     "name": "Current Consumption",
@@ -261,42 +261,6 @@
   },
   "eco/yesterday": {
     "name": "Yesterday Energy Economy",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:counter",
-    "expire_after": 86405
-  },
-
-  "import/whLifetime": {
-    "name": "Lifetime Energy Import",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:transmission-tower-import"
-  },
-  "import/kwhLifetime": {
-    "name": "Lifetime Energy Import (kWh)",
-    "platform": "sensor",
-    "unit_of_measurement": "kWh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:transmission-tower-import",
-    "source_field": "import/whLifetime",
-    "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
-  },
-  "import/today": {
-    "name": "Today's Energy Import",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "total_increasing",
-    "icon": "mdi:counter"
-  },
-  "import/yesterday": {
-    "name": "Yesterday Energy Import",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
     "device_class": "energy",

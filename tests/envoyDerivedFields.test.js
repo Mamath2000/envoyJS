@@ -39,14 +39,11 @@ test("deriveEnvoyFields calcule conso_net/grid/eco instantanes depuis generalMet
   assert.equal(out["eco/wNow"], 1200);
 });
 
-test("deriveEnvoyFields recopie voltage/current depuis le capteur général, sans calcul I=P/U", () => {
-  const out = deriveEnvoyFields(
-    {},
-    { generalMeterPowerW: 460, generalMeterVoltageV: 230.4, generalMeterCurrentA: 1.997 },
-  );
+test("deriveEnvoyFields recopie current depuis le capteur général, sans calcul I=P/U (voltage rationalisé sur prod/voltage)", () => {
+  const out = deriveEnvoyFields({}, { generalMeterPowerW: 460, generalMeterCurrentA: 1.997 });
 
-  assert.equal(out["conso_net/voltage"], 230.4);
   assert.equal(out["conso_net/current"], 1.997);
+  assert.equal(out["conso_net/voltage"], undefined);
 });
 
 test("deriveEnvoyFields laisse conso_all/wNow inchangé (plus de correction, tableau elec retiré)", () => {
@@ -58,7 +55,7 @@ test("deriveEnvoyFields laisse conso_all/wNow inchangé (plus de correction, tab
   assert.equal(out["conso_net/wNow"], 700);
 });
 
-test("deriveEnvoyFields calcule import/grid(togrid)/eco/conso_all/conso_net (whLifetime) depuis le capteur général", () => {
+test("deriveEnvoyFields calcule grid(togrid)/eco/conso_all/conso_net (whLifetime) depuis le capteur général — import n'est plus publié, seulement utilisé en interne", () => {
   const base = { "prod/whLifetime": 12_000 };
 
   const out = deriveEnvoyFields(base, {
@@ -66,11 +63,11 @@ test("deriveEnvoyFields calcule import/grid(togrid)/eco/conso_all/conso_net (whL
     generalMeterExportWhLifetime: 3_000,
   });
 
-  assert.equal(out["import/whLifetime"], 15_000);
+  assert.equal(out["import/whLifetime"], undefined); // plus de topic/sensor dedié
   assert.equal(out["grid/whLifetime"], 3_000); // export, lu directement
   assert.equal(out["eco/whLifetime"], 9_000); // prod(12_000) - export(3_000)
-  assert.equal(out["conso_all/whLifetime"], 24_000); // import(15_000) + eco(9_000)
-  assert.equal(out["conso_net/whLifetime"], 12_000); // import(15_000) - export(3_000)
+  assert.equal(out["conso_all/whLifetime"], 24_000); // import(15_000, interne) + eco(9_000)
+  assert.equal(out["conso_net/whLifetime"], 12_000); // import(15_000, interne) - export(3_000)
 });
 
 test("deriveEnvoyFields ne calcule aucun whLifetime derive si le capteur général n'a pas encore de donnees", () => {
@@ -85,10 +82,10 @@ test("deriveEnvoyFields ne calcule aucun whLifetime derive si le capteur génér
   assert.equal(out["conso_net/whLifetime"], undefined);
 });
 
-test("deriveEnvoyFields produit import/whLifetime meme si export n'est pas encore disponible (guards independants)", () => {
+test("deriveEnvoyFields: import seul (sans export) ne produit aucun champ whLifetime publié", () => {
   const out = deriveEnvoyFields({}, { generalMeterImportWhLifetime: 15_000 });
 
-  assert.equal(out["import/whLifetime"], 15_000);
+  assert.equal(out["import/whLifetime"], undefined);
   assert.equal(out["grid/whLifetime"], undefined);
   assert.equal(out["eco/whLifetime"], undefined);
   assert.equal(out["conso_all/whLifetime"], undefined);
@@ -129,4 +126,33 @@ test("deriveEnvoyFields: le delta _today de eco reste correct malgre un decalage
 test("deriveEnvoyFields clampe le bruit de veille des micro-onduleurs (prod/wNow <= 3W -> 0)", () => {
   const out = deriveEnvoyFields({ "prod/wNow": 2 }, {});
   assert.equal(out["prod/wNow"], 0);
+});
+
+test("deriveEnvoyFields rebaseline prod en interne (prodBaselineWh) pour eco/conso_all, sans jamais toucher au champ publié prod/whLifetime", () => {
+  const base = { "prod/whLifetime": 12_726_270 }; // gros compteur Envoy, vit depuis longtemps
+
+  const out = deriveEnvoyFields(base, {
+    prodBaselineWh: 12_726_270, // relevé au meme instant que les baselines du capteur général
+    generalMeterImportWhLifetime: 1_080,
+    generalMeterExportWhLifetime: 0,
+  });
+
+  // Le champ publié reste la vraie valeur absolue Envoy, inchangée.
+  assert.equal(out["prod/whLifetime"], 12_726_270);
+
+  // eco/conso_all utilisent prod - prodBaselineWh (≈0 ici) au lieu du gros
+  // nombre absolu, pour rester coherents avec des index tout juste rebaselinés.
+  assert.equal(out["eco/whLifetime"], 0); // (12_726_270 - 12_726_270) - export(0)
+  assert.equal(out["conso_all/whLifetime"], 1_080); // import(1_080) + eco(0)
+});
+
+test("deriveEnvoyFields: sans prodBaselineWh configurée, eco/conso_all retombent sur prod/whLifetime brut (comportement inchangé)", () => {
+  const base = { "prod/whLifetime": 12_000 };
+
+  const out = deriveEnvoyFields(base, {
+    generalMeterImportWhLifetime: 15_000,
+    generalMeterExportWhLifetime: 3_000,
+  });
+
+  assert.equal(out["eco/whLifetime"], 9_000); // 12_000 - 3_000, comme avant
 });

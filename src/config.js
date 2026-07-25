@@ -140,6 +140,14 @@ export function loadConfig() {
     generalMeterExportBaselineWh: Number.isFinite(Number(cfg?.sensors?.general_meter?.export_baseline_wh))
       ? Number(cfg?.sensors?.general_meter?.export_baseline_wh)
       : undefined,
+    // Baseline fixe de prod/whLifetime (Wh), relevée au meme instant que les
+    // deux baselines ci-dessus — utilisée uniquement en interne pour que eco/
+    // conso_all (whLifetime) restent coherents avec des index tout juste
+    // rebaselinés. Le champ publié prod/whLifetime n'est jamais affecté (reste
+    // la vraie valeur absolue depuis l'installation des panneaux).
+    prodBaselineWh: Number.isFinite(Number(cfg?.sensors?.general_meter?.prod_baseline_wh))
+      ? Number(cfg?.sensors?.general_meter?.prod_baseline_wh)
+      : undefined,
 
     midnightReferencesStateFile: String(cfg?.state?.midnight_references_file ?? "").trim() || undefined,
 
