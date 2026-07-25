@@ -445,10 +445,13 @@ export class EnvoyApi {
   }
 
   processMetersNetConsumptionData(metersData) {
-    // actEnergyDlvd/actEnergyRcvd (import/export du point de vue du RESEAU) ne
-    // sont plus mappes: import/grid (export) sont desormais deduits du compteur
-    // EDF par conservation d'energie (voir envoyDerivedFields.js), plus fiable
-    // en presence du tableau ext (pas besoin de correction energyOffsetWh).
+    // Lecture brute du TOR net-consumption Envoy: conso_net/wNow, voltage et
+    // current sont ensuite ecrases par deriveEnvoyFields() avec les valeurs du
+    // capteur general des qu'il en fournit (voir envoyDerivedFields.js) — ce
+    // TOR reste aveugle au tableau ext, contrairement au capteur general.
+    // actEnergyDlvd/actEnergyRcvd (import/export du point de vue du reseau) ne
+    // sont plus mappes: import/grid (export) viennent directement des deux
+    // index (import/export) du capteur general, sans correction a appliquer.
     const renameMapping = {
       instantaneousDemand: "conso_net/wNow",
       voltage: "conso_net/voltage",

@@ -168,23 +168,6 @@
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
-  "tableau_ext/wNow": {
-    "name": "Tableau Elec Ext",
-    "platform": "sensor",
-    "unit_of_measurement": "W",
-    "device_class": "power",
-    "state_class": "measurement",
-    "icon": "mdi:transmission-tower"
-  },
-  "tableau_ext/whOffset": {
-    "name": "Tableau Elec Ext Offset",
-    "platform": "sensor",
-    "unit_of_measurement": "Wh",
-    "device_class": "energy",
-    "state_class": "measurement",
-    "icon": "mdi:transmission-tower"
-  },
-
   "timestamp": {
     "name": "Last Update Timestamp",
     "platform": "sensor",
@@ -287,7 +270,7 @@
   },
 
   "import/whLifetime": {
-    "name": "Lifetime Energy Import EDF",
+    "name": "Lifetime Energy Import",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
     "device_class": "energy",
@@ -295,7 +278,7 @@
     "icon": "mdi:transmission-tower-import"
   },
   "import/kwhLifetime": {
-    "name": "Lifetime Energy Import EDF (kWh)",
+    "name": "Lifetime Energy Import (kWh)",
     "platform": "sensor",
     "unit_of_measurement": "kWh",
     "device_class": "energy",
@@ -305,7 +288,7 @@
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
   "import/today": {
-    "name": "Today's Energy Import EDF",
+    "name": "Today's Energy Import",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
     "device_class": "energy",
@@ -313,7 +296,7 @@
     "icon": "mdi:counter"
   },
   "import/yesterday": {
-    "name": "Yesterday Energy Import EDF",
+    "name": "Yesterday Energy Import",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
     "device_class": "energy",

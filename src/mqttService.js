@@ -13,19 +13,6 @@ import {
 import { deriveEnvoyFields } from "./envoyDerivedFields.js";
 
 export class EnvoyMqttService {
-  // Nombre de lectures consecutives, coherentes entre elles, exigees en dessous
-  // de la derniere valeur confirmee avant de committer un reset/remplacement de
-  // capteur tableau elec (protege contre un payload glitché isolé, ex: null/0).
-  static RESET_CONFIRMATIONS_REQUIRED = 3;
-
-  // Intervalle minimum entre deux ecritures disque "non critiques" de l'etat
-  // tableau elec (progression normale de l'index). lastIndexWh/energyFromIndexWh
-  // sont toujours ecrits ensemble: perdre des ecritures intermediaires n'a pas
-  // d'impact sur l'exactitude (le prochain delta recalcule le meme total depuis
-  // le dernier point sauvegardé). Les transitions rares (baseline, reset en
-  // cours/confirmé, arret du service) ne sont jamais throttlées.
-  static TABLEAU_ELEC_SAVE_THROTTLE_MS = 60 * 60 * 1000;
-
   constructor({ config, api, log } = {}) {
     this.config = config;
     this.api = api;
@@ -61,42 +48,44 @@ export class EnvoyMqttService {
       "midnight-references-state.json",
     );
 
-    this.tableauElec = {
-      enabled: Boolean(this.config.tableauElecEnabled),
-      topic: this.config.tableauElecTopic,
-      powerField: this.config.tableauElecPowerField,
-      indexField: this.config.tableauElecIndexField,
-      indexUnit: this.config.tableauElecIndexUnit,
-      stateFilePath: this.resolveStateFilePath(this.config.tableauElecStateFile, "tableau-elec-state.json"),
-      sign: Number.isFinite(Number(this.config.tableauElecSign)) ? Number(this.config.tableauElecSign) : 1,
+    // Capteur general (zigbee bidirectionnel), place sur "le general" (meme
+    // point que l'ancien compteur EDF, en amont de la scission maison/tableau
+    // ext): il voit l'integralite du flux reseau de l'installation, en
+    // instantane (power/voltage/current) comme en cumule (deux registres
+    // materiels independants, import et export/"to_grid"). Remplace a la fois
+    // le TOR net-consumption de l'Envoy, le tableau elec (capteur relocalise
+    // sur le general) et le compteur EDF/Linky (tous deux retires).
+    //
+    // La baseline de chaque registre est une CONSTANTE de configuration
+    // (sensors.general_meter.import_baseline_wh/export_baseline_wh), relevée
+    // une seule fois par l'utilisateur a l'installation physique du capteur —
+    // le code ne la capture jamais tout seul et ne la met jamais a jour
+    // ensuite (voir applyGeneralMeterReading: `energyWh = brut - baseline`,
+    // garde-fou monotone contre les glitches, mais la baseline elle-meme est
+    // figee pour toute la duree de vie du capteur). Aucune persistance disque
+    // necessaire: rien d'autre qu'une constante de config n'a besoin de
+    // survivre a un redemarrage.
+    this.generalMeter = {
+      topic: this.config.generalMeterTopic,
+      powerField: this.config.generalMeterPowerField || "power",
+      voltageField: this.config.generalMeterVoltageField || "voltage",
+      currentField: this.config.generalMeterCurrentField || "current",
+      importIndexField: this.config.generalMeterImportIndexField || "energy",
+      exportIndexField: this.config.generalMeterExportIndexField || "produced_energy",
+      indexUnit: this.config.generalMeterIndexUnit || "kwh",
       state: {
-        currentPowerW: 0,
-        energyFromIndexWh: 0,
-        lastIndexWh: undefined,
-        pendingResetIndexWh: undefined,
-        pendingResetLastSeenWh: undefined,
-        pendingResetCount: 0,
-        // Dernier payload brut recu du capteur externe (avant parsing), pour
-        // publication en mode debug (voir publishDebugPayloads). Non persisté.
+        currentPowerW: undefined,
+        voltageV: undefined,
+        currentA: undefined,
+        // Dernier prod_eim_wNow connu (rafraichi par publishRawLoop au rythme
+        // du polling Envoy), utilise pour calculer conso_all_eim_wNow des
+        // qu'un nouveau message du capteur general arrive.
+        lastProdEimWNow: 0,
+        // Dernier payload brut recu (avant parsing), pour publication en mode
+        // debug (voir publishDebugPayloads). Non persisté.
         lastRawPayload: undefined,
-      },
-      // Bookkeeping en memoire uniquement (non persisté sur disque) pour le
-      // throttle des sauvegardes non critiques.
-      lastSavedAt: 0,
-    };
-
-    // Compteur EDF (Linky, index EAST/"energie active soutiree totale"): situe
-    // avant la scission maison/tableau ext, il voit deja le vrai import combine
-    // des deux reseaux, sans avoir besoin d'aucune correction (contrairement au
-    // TOR, aveugle au tableau ext). C'est un vrai registre materiel (jamais
-    // remplace en pratique) — pas besoin de la machinerie anti-glitch complete
-    // du tableau ext, juste ignorer une baisse isolee (frame teleinfo corrompu).
-    this.edfMeter = {
-      topic: this.config.edfMeterTopic,
-      indexField: this.config.edfMeterIndexField,
-      state: {
-        lastImportWh: undefined,
-        lastRawPayload: undefined,
+        import: { baselineWh: this.config.generalMeterImportBaselineWh, energyWh: 0 },
+        export: { baselineWh: this.config.generalMeterExportBaselineWh, energyWh: 0 },
       },
     };
 
@@ -253,103 +242,6 @@ export class EnvoyMqttService {
     }
   }
 
-  loadTableauElecStateFromDisk() {
-    if (!this.tableauElec.enabled || !this.tableauElec.indexField) return;
-
-    const stateFilePath = this.tableauElec.stateFilePath;
-    if (!stateFilePath || !fs.existsSync(stateFilePath)) return;
-
-    try {
-      const raw = fs.readFileSync(stateFilePath, "utf-8");
-      const persisted = JSON.parse(raw);
-
-      const lastIndexWh = Number(persisted?.lastIndexWh);
-      const energyFromIndexWh = Number(persisted?.energyFromIndexWh);
-      const pendingResetIndexWh = Number(persisted?.pendingResetIndexWh);
-      const pendingResetLastSeenWh = Number(persisted?.pendingResetLastSeenWh);
-      const pendingResetCount = Number(persisted?.pendingResetCount);
-
-      if (Number.isFinite(lastIndexWh)) {
-        this.tableauElec.state.lastIndexWh = lastIndexWh;
-      }
-
-      if (Number.isFinite(energyFromIndexWh)) {
-        this.tableauElec.state.energyFromIndexWh = energyFromIndexWh;
-      }
-
-      if (Number.isFinite(pendingResetIndexWh)) {
-        this.tableauElec.state.pendingResetIndexWh = pendingResetIndexWh;
-      }
-
-      if (Number.isFinite(pendingResetLastSeenWh)) {
-        this.tableauElec.state.pendingResetLastSeenWh = pendingResetLastSeenWh;
-      }
-
-      if (Number.isFinite(pendingResetCount)) {
-        this.tableauElec.state.pendingResetCount = pendingResetCount;
-      }
-
-      this.log.info("etat tableau elec restauré depuis disque", {
-        stateFilePath,
-        hasLastIndex: Number.isFinite(this.tableauElec.state.lastIndexWh),
-        energyFromIndexWh: Math.round(this.tableauElec.state.energyFromIndexWh || 0),
-        pendingResetConfirmations: this.tableauElec.state.pendingResetCount || 0,
-      });
-    } catch (err) {
-      this.log.warn("impossible de lire l'etat tableau elec", {
-        stateFilePath,
-        message: err?.message ?? String(err),
-      });
-    }
-  }
-
-  saveTableauElecStateToDisk(force = false) {
-    if (!this.tableauElec.enabled || !this.tableauElec.indexField) return;
-
-    const stateFilePath = this.tableauElec.stateFilePath;
-    if (!stateFilePath) return;
-
-    const now = Date.now();
-    if (!force && now - this.tableauElec.lastSavedAt < EnvoyMqttService.TABLEAU_ELEC_SAVE_THROTTLE_MS) {
-      return;
-    }
-
-    try {
-      const stateDir = path.dirname(stateFilePath);
-      fs.mkdirSync(stateDir, { recursive: true });
-
-      const payload = {
-        version: 2,
-        updatedAt: new Date().toISOString(),
-        lastIndexWh: Number.isFinite(this.tableauElec.state.lastIndexWh)
-          ? this.tableauElec.state.lastIndexWh
-          : null,
-        energyFromIndexWh: Number.isFinite(this.tableauElec.state.energyFromIndexWh)
-          ? this.tableauElec.state.energyFromIndexWh
-          : 0,
-        pendingResetIndexWh: Number.isFinite(this.tableauElec.state.pendingResetIndexWh)
-          ? this.tableauElec.state.pendingResetIndexWh
-          : null,
-        pendingResetLastSeenWh: Number.isFinite(this.tableauElec.state.pendingResetLastSeenWh)
-          ? this.tableauElec.state.pendingResetLastSeenWh
-          : null,
-        pendingResetCount: Number.isFinite(this.tableauElec.state.pendingResetCount)
-          ? this.tableauElec.state.pendingResetCount
-          : 0,
-      };
-
-      const tmpPath = `${stateFilePath}.tmp`;
-      fs.writeFileSync(tmpPath, JSON.stringify(payload), "utf-8");
-      fs.renameSync(tmpPath, stateFilePath);
-      this.tableauElec.lastSavedAt = now;
-    } catch (err) {
-      this.log.warn("impossible de sauvegarder l'etat tableau elec", {
-        stateFilePath,
-        message: err?.message ?? String(err),
-      });
-    }
-  }
-
   async start() {
     this.running = true;
 
@@ -374,15 +266,27 @@ export class EnvoyMqttService {
     await this.publishStatus("online");
 
     this.installMqttListeners(client);
-    this.loadTableauElecStateFromDisk();
     this.loadMidnightReferencesFromDisk();
     // Le fichier disque est la source de verite au demarrage: on republie
     // immediatement en retained pour resynchroniser MQTT/HA, sans attendre un
     // eventuel rollover (qui peut n'arriver que 24h plus tard).
     await this.republishMidnightReferencesToMqtt();
 
-    if (this.tableauElec.enabled && !this.tableauElec.indexField) {
-      this.log.warn("tableau elec sans index_field: correction energie des compteurs desactivée (puissance instantanee uniquement)");
+    if (!this.generalMeter.topic) {
+      this.log.warn(
+        "capteur général non configuré (sensors.general_meter.topic): conso_net, import, grid et eco ne seront pas produits",
+      );
+    } else {
+      if (!Number.isFinite(this.generalMeter.state.import.baselineWh)) {
+        this.log.warn(
+          "sensors.general_meter.import_baseline_wh manquant: import/whLifetime ne sera pas produit",
+        );
+      }
+      if (!Number.isFinite(this.generalMeter.state.export.baselineWh)) {
+        this.log.warn(
+          "sensors.general_meter.export_baseline_wh manquant: grid/eco/conso_all (whLifetime) ne seront pas produits",
+        );
+      }
     }
 
     try {
@@ -441,8 +345,6 @@ export class EnvoyMqttService {
   async stop() {
     this.running = false;
 
-    this.saveTableauElecStateToDisk(true);
-
     if (this.mqttClient) {
       try {
         await this.publishStatus("offline");
@@ -457,24 +359,18 @@ export class EnvoyMqttService {
   }
 
   installMqttListeners(client) {
-    if (this.tableauElec.enabled && this.tableauElec.topic) {
-      client.subscribe(this.tableauElec.topic);
-      this.log.info("capteur tableau elec MQTT activé", {
-        topic: this.tableauElec.topic,
-        powerField: this.tableauElec.powerField,
-        indexField: this.tableauElec.indexField,
-        indexUnit: this.tableauElec.indexUnit,
-        sign: this.tableauElec.sign,
-        stateFilePath: this.tableauElec.stateFilePath,
-        persistence: "fichier + mémoire process",
-      });
-    }
-
-    if (this.edfMeter.topic) {
-      client.subscribe(this.edfMeter.topic);
-      this.log.info("compteur EDF (teleinfo) activé", {
-        topic: this.edfMeter.topic,
-        indexField: this.edfMeter.indexField,
+    if (this.generalMeter.topic) {
+      client.subscribe(this.generalMeter.topic);
+      this.log.info("capteur général MQTT activé", {
+        topic: this.generalMeter.topic,
+        powerField: this.generalMeter.powerField,
+        voltageField: this.generalMeter.voltageField,
+        currentField: this.generalMeter.currentField,
+        importIndexField: this.generalMeter.importIndexField,
+        exportIndexField: this.generalMeter.exportIndexField,
+        indexUnit: this.generalMeter.indexUnit,
+        importBaselineWh: this.generalMeter.state.import.baselineWh,
+        exportBaselineWh: this.generalMeter.state.export.baselineWh,
       });
     }
 
@@ -482,50 +378,45 @@ export class EnvoyMqttService {
       const topic = String(topicBuf);
       const payload = payloadBuf.toString();
 
-      if (this.tableauElec.enabled && this.tableauElec.topic && topic === this.tableauElec.topic) {
-        this.tableauElec.state.lastRawPayload = payload;
+      if (this.generalMeter.topic && topic === this.generalMeter.topic) {
+        this.generalMeter.state.lastRawPayload = payload;
 
-        const { powerW, indexWh } = this.parseTableauElecPayload(payload);
-        if (!Number.isFinite(powerW) && !Number.isFinite(indexWh)) return;
+        const { powerW, voltageV, currentA, importWh, exportWh } = this.parseGeneralMeterPayload(payload);
+        if (!Number.isFinite(powerW)) return;
 
-        if (Number.isFinite(powerW)) {
-          this.tableauElec.state.currentPowerW = Number(powerW);
+        this.generalMeter.state.currentPowerW = powerW;
+        if (Number.isFinite(voltageV)) this.generalMeter.state.voltageV = voltageV;
+        if (Number.isFinite(currentA)) this.generalMeter.state.currentA = currentA;
+
+        // energyWh = brut - baseline, calcule des la lecture du payload (voir
+        // applyGeneralMeterReading) — la baseline elle-meme est une constante
+        // de config, jamais touchee ici.
+        if (Number.isFinite(importWh)) {
+          this.applyGeneralMeterReading(this.generalMeter.state.import, importWh, "capteur général (import)");
+        }
+        if (Number.isFinite(exportWh)) {
+          this.applyGeneralMeterReading(this.generalMeter.state.export, exportWh, "capteur général (export)");
         }
 
-        if (Number.isFinite(indexWh)) {
-          this.updateTableauElecIndexOffset(indexWh);
-        }
-      }
-
-      if (this.edfMeter.topic && topic === this.edfMeter.topic) {
-        this.edfMeter.state.lastRawPayload = payload;
-        this.updateEdfMeterImport(payload);
+        // Publication immediate (pas d'attente du tick de publishRawLoop): le
+        // capteur general pousse ses messages bien plus vite (~3/s) que le
+        // polling Envoy — decoupler leur publication du timer permet a
+        // conso_net_eim_wNow/conso_all_eim_wNow de suivre ce rythme.
+        this.publishGeneralMeterRawPower(powerW).catch((err) => {
+          this.log.warn("publication raw capteur général échouée", {
+            message: err?.message ?? String(err),
+          });
+        });
       }
     });
   }
 
-  updateEdfMeterImport(payload) {
-    let importWh = NaN;
-    try {
-      const parsed = JSON.parse(payload);
-      importWh = Number(this.extractByPath(parsed, this.edfMeter.indexField));
-    } catch (err) {
-      this.log.debug("payload EDF illisible, ignoré", { message: err?.message ?? String(err) });
-      return;
-    }
+  async publishGeneralMeterRawPower(powerW) {
+    const netW = Math.round(powerW);
+    const allW = Math.round(this.generalMeter.state.lastProdEimWNow + powerW);
 
-    if (!Number.isFinite(importWh)) return;
-
-    const previous = this.edfMeter.state.lastImportWh;
-    if (previous != null && importWh < previous) {
-      // Baisse isolee (frame teleinfo corrompu le plus souvent): EAST est un
-      // registre materiel Linky, il ne peut physiquement pas redescendre. On
-      // ignore cette lecture plutot que de la committer.
-      this.log.debug("baisse isolée de l'index EDF ignorée", { previousWh: previous, receivedWh: importWh });
-      return;
-    }
-
-    this.edfMeter.state.lastImportWh = importWh;
+    await this.publish(`${this.topicRaw}/conso_net_eim_wNow`, String(netW), { retain: false, debug: false });
+    await this.publish(`${this.topicRaw}/conso_all_eim_wNow`, String(allW), { retain: false, debug: false });
   }
 
   async publishRawLoop() {
@@ -537,15 +428,33 @@ export class EnvoyMqttService {
       const start = Date.now();
       try {
         const rawData = await this.api.getRawData({ debug: false });
-        const adjustedRawData = this.applyTableauElecOnRawData(rawData);
+
+        // prod_eim_wNow reste borné par le rythme de polling Envoy (source
+        // unique de la production) — bruit de veille clampé à 0 comme avant.
+        const prodRaw = Number(rawData.prod_eim_wNow);
+        const prodW = Number.isFinite(prodRaw) && prodRaw < 5 ? 0 : prodRaw;
+        if (Number.isFinite(prodW)) {
+          this.generalMeter.state.lastProdEimWNow = prodW;
+        }
+
+        // conso_net_eim_wNow/conso_all_eim_wNow sont republiés ici comme
+        // heartbeat (au rythme du tick Envoy) à partir du dernier état connu
+        // du capteur général — leur publication "rapide" a lieu par ailleurs
+        // dès reception d'un message MQTT du capteur (voir
+        // publishGeneralMeterRawPower, appelé depuis installMqttListeners).
+        const netW = Number.isFinite(this.generalMeter.state.currentPowerW)
+          ? this.generalMeter.state.currentPowerW
+          : 0;
+        const adjustedRawData = {
+          ...rawData,
+          prod_eim_wNow: prodW,
+          conso_net_eim_wNow: Math.round(netW),
+          conso_all_eim_wNow: Math.round(this.generalMeter.state.lastProdEimWNow + netW),
+        };
 
         for (const [field, value] of Object.entries(adjustedRawData)) {
           const topic = `${this.topicRaw}/${field}`;
-          if (field === "prod_eim_wNow" && Number(value) < 5) {
-            await this.publish(topic, "0", { retain: false, debug: false });
-          } else {
-            await this.publish(topic, String(value), { retain: false, debug: false });
-          }
+          await this.publish(topic, String(value), { retain: false, debug: false });
         }
       } catch (err) {
         this.log.warn("erreur lecture raw Envoy", { message: err?.message ?? String(err) });
@@ -555,25 +464,6 @@ export class EnvoyMqttService {
       const sleepMs = Math.max(0, intervalMs - elapsed);
       await sleep(sleepMs);
     }
-  }
-
-  applyTableauElecOnRawData(rawData) {
-    if (!this.tableauElec.enabled || !rawData || typeof rawData !== "object") return rawData;
-
-    const adjusted = { ...rawData };
-    const signedPowerW = this.tableauElec.state.currentPowerW * this.tableauElec.sign;
-
-    const netW = Number(adjusted.conso_net_eim_wNow);
-    if (Number.isFinite(netW)) {
-      adjusted.conso_net_eim_wNow = Math.round(netW + signedPowerW);
-    }
-
-    const allW = Number(adjusted.conso_all_eim_wNow);
-    if (Number.isFinite(allW)) {
-      adjusted.conso_all_eim_wNow = Math.round(allW + signedPowerW);
-    }
-
-    return adjusted;
   }
 
   async publishFullLoop() {
@@ -660,7 +550,7 @@ export class EnvoyMqttService {
   }
 
   // Republie le dernier payload brut de chaque endpoint Envoy (avant tout
-  // renommage/calcul) et du capteur tableau ext, un sous-topic par source, pour
+  // renommage/calcul) et du capteur general, un sous-topic par source, pour
   // faciliter le debug sans avoir a activer un sniffer HTTP/MQTT externe.
   // Actif uniquement si logging.level (ou LOG_LEVEL) vaut "debug".
   async publishDebugPayloads() {
@@ -679,16 +569,9 @@ export class EnvoyMqttService {
       await this.publish(`${this.topicDebug}/${suffix}`, JSON.stringify(value), { retain: true, debug: false });
     }
 
-    if (this.tableauElec.enabled) {
-      const tableauPayload = this.tableauElec.state.lastRawPayload;
-      if (tableauPayload !== undefined) {
-        await this.publish(`${this.topicDebug}/tableau_ext`, tableauPayload, { retain: true, debug: false });
-      }
-    }
-
-    const edfPayload = this.edfMeter.state.lastRawPayload;
-    if (edfPayload !== undefined) {
-      await this.publish(`${this.topicDebug}/edf_meter`, edfPayload, { retain: true, debug: false });
+    const generalMeterPayload = this.generalMeter.state.lastRawPayload;
+    if (generalMeterPayload !== undefined) {
+      await this.publish(`${this.topicDebug}/general_meter`, generalMeterPayload, { retain: true, debug: false });
     }
   }
 
@@ -797,16 +680,15 @@ export class EnvoyMqttService {
       .reduce((acc, key) => (acc == null ? undefined : acc[key]), obj);
   }
 
-  normalizeTableauElecIndexWh(rawIndex) {
+  normalizeGeneralMeterIndexWh(rawIndex) {
     const numeric = Number(rawIndex);
     if (!Number.isFinite(numeric)) return NaN;
 
-    const unit = String(this.tableauElec.indexUnit ?? "auto").toLowerCase();
+    const unit = String(this.generalMeter.indexUnit ?? "kwh").toLowerCase();
     if (unit === "kwh") return numeric * 1000;
     if (unit === "wh") return numeric;
 
-    // Convention: les index Zigbee2MQTT sont generalement en kWh.
-    // Heuristique: decimal ou valeur "raisonnable" => kWh, sinon Wh.
+    // Heuristique "auto": decimal ou valeur "raisonnable" => kWh, sinon Wh.
     const asString = typeof rawIndex === "string" ? rawIndex.trim() : "";
     const hasDecimal = asString ? /[.,]/.test(asString) : !Number.isInteger(numeric);
     const abs = Math.abs(numeric);
@@ -814,182 +696,90 @@ export class EnvoyMqttService {
     return looksLikeKwh ? numeric * 1000 : numeric;
   }
 
-  parseTableauElecPayload(payload) {
+  parseGeneralMeterPayload(payload) {
     const strPayload = String(payload ?? "").trim();
-    if (!strPayload) return { powerW: NaN, indexWh: NaN };
+    if (!strPayload) return { powerW: NaN, voltageV: NaN, currentA: NaN, importWh: NaN, exportWh: NaN };
 
     let powerW = NaN;
-    let indexWh = NaN;
-
-    if (!this.tableauElec.powerField) {
-      const asNumber = Number(strPayload);
-      if (Number.isFinite(asNumber)) powerW = asNumber;
-    }
+    let voltageV = NaN;
+    let currentA = NaN;
+    let importWh = NaN;
+    let exportWh = NaN;
 
     try {
       const parsed = JSON.parse(strPayload);
+      powerW = Number(this.extractByPath(parsed, this.generalMeter.powerField));
+      voltageV = Number(this.extractByPath(parsed, this.generalMeter.voltageField));
+      currentA = Number(this.extractByPath(parsed, this.generalMeter.currentField));
 
-      if (this.tableauElec.powerField) {
-        powerW = Number(this.extractByPath(parsed, this.tableauElec.powerField));
-      }
+      const rawImport = this.extractByPath(parsed, this.generalMeter.importIndexField);
+      importWh = this.normalizeGeneralMeterIndexWh(rawImport);
 
-      if (!Number.isFinite(powerW) && typeof parsed === "number") {
-        powerW = parsed;
-      }
-
-      if (!Number.isFinite(powerW) && parsed && typeof parsed === "object") {
-        const candidates = [parsed.power, parsed.watt, parsed.watts, parsed.value, parsed.w];
-        for (const candidate of candidates) {
-          const n = Number(candidate);
-          if (Number.isFinite(n)) {
-            powerW = n;
-            break;
-          }
-        }
-      }
-
-      if (this.tableauElec.indexField) {
-        const rawIndex = this.extractByPath(parsed, this.tableauElec.indexField);
-        indexWh = this.normalizeTableauElecIndexWh(rawIndex);
-      }
+      const rawExport = this.extractByPath(parsed, this.generalMeter.exportIndexField);
+      exportWh = this.normalizeGeneralMeterIndexWh(rawExport);
     } catch {
-      // payload non JSON: déjà tenté en nombre brut
+      // payload non JSON: tous les champs restent NaN
     }
 
-    if (!Number.isFinite(powerW) && !Number.isFinite(indexWh)) {
-      this.log.debug("message tableau elec ignoré: payload non numérique", {
-        topic: this.tableauElec.topic,
+    if (!Number.isFinite(powerW)) {
+      this.log.debug("message capteur general ignoré: puissance non numérique", {
+        topic: this.generalMeter.topic,
         preview: strPayload.slice(0, 120),
       });
     }
 
-    return { powerW, indexWh };
+    return { powerW, voltageV, currentA, importWh, exportWh };
   }
 
-  clearPendingTableauElecReset() {
-    const state = this.tableauElec.state;
-    state.pendingResetIndexWh = undefined;
-    state.pendingResetLastSeenWh = undefined;
-    state.pendingResetCount = 0;
-  }
-
-  updateTableauElecIndexOffset(indexWh) {
-    const state = this.tableauElec.state;
-
-    if (!Number.isFinite(indexWh)) return;
-
-    if (!Number.isFinite(state.lastIndexWh)) {
-      state.lastIndexWh = indexWh;
-      this.saveTableauElecStateToDisk(true);
-      this.log.debug("index tableau elec initialisé (valeur absolue ignorée, base différentielle)", {
-        baselineWh: Math.round(indexWh),
+  // Calcule energyWh = brut - baseline pour un registre du capteur general
+  // (import ou export), a chaque lecture du payload — voir
+  // installMqttListeners. La baseline elle-meme (registerState.baselineWh)
+  // est une constante de configuration (sensors.general_meter.*_baseline_wh),
+  // relevée une fois pour toutes par l'utilisateur a l'installation physique
+  // du capteur: cette fonction ne la capture ni ne la modifie jamais — si
+  // elle est absente (mauvaise config), la lecture est simplement ignorée.
+  //
+  // Garde-fou monotone: tant que la baseline ne change pas, un registre
+  // materiel ne peut physiquement pas faire baisser energyWh. Toute lecture
+  // qui produirait une baisse est donc forcement un glitch (payload corrompu,
+  // capteur qui redemarre) — elle est ignorée, jamais publiée. Un vrai
+  // remplacement physique du capteur necessite de reconfigurer manuellement
+  // une nouvelle baseline (sensors.general_meter.*_baseline_wh).
+  applyGeneralMeterReading(registerState, indexWh, label) {
+    if (!Number.isFinite(registerState.baselineWh)) {
+      this.log.debug(`lecture ${label} ignorée: aucune baseline configurée`, {
+        indexWh: Math.round(indexWh),
       });
       return;
     }
 
-    const deltaWh = indexWh - state.lastIndexWh;
-
-    if (deltaWh >= -1) {
-      // Progression normale depuis la derniere valeur confirmee.
-      if (state.pendingResetCount > 0) {
-        // Un reset etait en cours de confirmation mais le capteur est revenu sur sa
-        // trajectoire d'origine: c'etaient des payloads glitchés (null/0), on les ignore.
-        this.log.debug("baisse d'index tableau elec ignorée: payloads isolés non confirmés", {
-          candidateWh: Math.round(state.pendingResetIndexWh),
-          confirmations: state.pendingResetCount,
-          currentWh: Math.round(indexWh),
-        });
-        this.clearPendingTableauElecReset();
-      }
-
-      const safeDeltaWh = deltaWh < 0 ? 0 : deltaWh;
-      state.energyFromIndexWh += safeDeltaWh * this.tableauElec.sign;
-      state.lastIndexWh = indexWh;
-      this.saveTableauElecStateToDisk();
-      return;
-    }
-
-    // Baisse detectee (deltaWh < -1): ne jamais committer sur une seule lecture, ni deux.
-    // Un payload glitché (null/0) est indiscernable d'un vrai remplacement de capteur;
-    // on exige RESET_CONFIRMATIONS_REQUIRED lectures consecutives et coherentes entre
-    // elles avant de committer le reset.
-    const isFirstCandidate = !(state.pendingResetCount > 0);
-    const deltaFromLastSeenWh = isFirstCandidate ? 0 : indexWh - state.pendingResetLastSeenWh;
-
-    if (!isFirstCandidate && deltaFromLastSeenWh < -1) {
-      // Toujours erratique/en baisse par rapport au candidat precedent: on redemarre
-      // la fenetre de confirmation a partir de cette nouvelle valeur.
-      state.pendingResetIndexWh = indexWh;
-      state.pendingResetLastSeenWh = indexWh;
-      state.pendingResetCount = 1;
-      this.saveTableauElecStateToDisk(true);
-      this.log.debug("index tableau elec: candidat de reset instable, fenetre redemarrée", {
-        candidateWh: Math.round(indexWh),
+    const candidateEnergyWh = indexWh - registerState.baselineWh;
+    if (candidateEnergyWh < registerState.energyWh) {
+      this.log.debug(`lecture ${label} ignorée: energyWh en baisse (glitch probable)`, {
+        previousEnergyWh: Math.round(registerState.energyWh),
+        candidateEnergyWh: Math.round(candidateEnergyWh),
       });
       return;
     }
 
-    if (isFirstCandidate) {
-      state.pendingResetIndexWh = indexWh;
-      state.pendingResetLastSeenWh = indexWh;
-      state.pendingResetCount = 1;
-    } else {
-      state.pendingResetLastSeenWh = indexWh;
-      state.pendingResetCount += 1;
-    }
-    this.saveTableauElecStateToDisk(true);
-
-    if (state.pendingResetCount < EnvoyMqttService.RESET_CONFIRMATIONS_REQUIRED) {
-      this.log.warn("index tableau elec en baisse: en attente de confirmation avant reset", {
-        previousWh: Math.round(state.lastIndexWh),
-        candidateWh: Math.round(indexWh),
-        confirmations: state.pendingResetCount,
-        required: EnvoyMqttService.RESET_CONFIRMATIONS_REQUIRED,
-      });
-      return;
-    }
-
-    // Reset confirmé sur RESET_CONFIRMATIONS_REQUIRED lectures consecutives.
-    // L'offset deja accumulé (ex: capteur precedent) est preservé, seul le delta
-    // depuis le tout premier candidat est ajouté.
-    const previousConfirmedWh = state.lastIndexWh;
-    const totalDeltaSincePendingWh = indexWh - state.pendingResetIndexWh;
-    const safeDeltaWh = totalDeltaSincePendingWh < 0 ? 0 : totalDeltaSincePendingWh;
-    state.energyFromIndexWh += safeDeltaWh * this.tableauElec.sign;
-    state.lastIndexWh = indexWh;
-    this.clearPendingTableauElecReset();
-    this.saveTableauElecStateToDisk(true);
-    this.log.warn("index tableau elec: reset/remplacement du capteur confirmé", {
-      previousWh: Math.round(previousConfirmedWh),
-      newBaselineWh: Math.round(indexWh),
-    });
+    registerState.energyWh = candidateEnergyWh;
   }
 
-  getExternalCorrections() {
-    const edfImportWhLifetime = this.edfMeter.state.lastImportWh;
+  getExternalInputs() {
+    const importState = this.generalMeter.state.import;
+    const exportState = this.generalMeter.state.export;
 
-    if (!this.tableauElec.enabled) {
-      return { signedPowerW: 0, energyOffsetWh: 0, edfImportWhLifetime };
-    }
-
-    const signedPowerW = this.tableauElec.state.currentPowerW * this.tableauElec.sign;
-    const energyOffsetWh = this.tableauElec.indexField && Number.isFinite(this.tableauElec.state.lastIndexWh)
-      ? this.tableauElec.state.energyFromIndexWh
-      : 0;
-
-    return { signedPowerW, energyOffsetWh, edfImportWhLifetime };
+    return {
+      generalMeterPowerW: this.generalMeter.state.currentPowerW,
+      generalMeterVoltageV: this.generalMeter.state.voltageV,
+      generalMeterCurrentA: this.generalMeter.state.currentA,
+      generalMeterImportWhLifetime: Number.isFinite(importState.baselineWh) ? importState.energyWh : undefined,
+      generalMeterExportWhLifetime: Number.isFinite(exportState.baselineWh) ? exportState.energyWh : undefined,
+    };
   }
 
   deriveFullData(rawFields) {
-    const correction = this.getExternalCorrections();
-    const data = deriveEnvoyFields(rawFields, correction);
-
-    if (this.tableauElec.enabled && data && typeof data === "object") {
-      data["tableau_ext/wNow"] = Math.round(correction.signedPowerW);
-      data["tableau_ext/whOffset"] = Math.round(correction.energyOffsetWh);
-    }
-
-    return data;
+    return deriveEnvoyFields(rawFields, this.getExternalInputs());
   }
 
   async getCorrectedFullData({ debug } = {}) {

@@ -45,7 +45,10 @@ sensors:
     import_index_field: "energy"           # index cumulé importé
     export_index_field: "produced_energy"  # index cumulé exporté/injecté ("to_grid")
     index_unit: "kwh"                      # "kwh", "wh" ou "auto"
-    state_file: "data/general-meter-state.json"  # persistance des baselines/index entre redémarrages
+    # Index brut releve UNE SEULE FOIS a l'installation physique du capteur
+    # sur le general (en Wh) — jamais recapturé/mis a jour automatiquement.
+    import_baseline_wh: 0
+    export_baseline_wh: 0
 
 state:
   midnight_references_file: "data/midnight-references-state.json"  # persistance des references _00h/dernier rollover entre redémarrages

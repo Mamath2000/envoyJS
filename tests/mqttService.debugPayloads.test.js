@@ -16,14 +16,13 @@ function createLog(level) {
   };
 }
 
-function createService({ level, tableauElecEnabled = false, api = {} } = {}) {
+function createService({ level, api = {} } = {}) {
   const service = new EnvoyMqttService({
     config: {
       mqttBaseTopic: "envoy",
       serialNumber: "123456789",
       timeZoneName: "Europe/Paris",
       haAutodiscovery: false,
-      tableauElecEnabled,
     },
     api,
     log: createLog(level),
@@ -75,30 +74,28 @@ test("publishDebugPayloads republie chaque endpoint sur son propre sous-topic en
   assert.equal(byTopic["envoy/123456789/debug/production_v1"], JSON.stringify({ wattHoursToday: 789 }));
 });
 
-test("publishDebugPayloads republie aussi le dernier payload brut du tableau ext quand active", async () => {
+test("publishDebugPayloads republie le dernier payload brut du capteur général quand disponible", async () => {
   const { service, publishedTopics } = createService({
     level: "debug",
-    tableauElecEnabled: true,
     api: { lastRawPayloads: {} },
   });
 
-  service.tableauElec.state.lastRawPayload = '{"power":42,"energy":1.23}';
+  service.generalMeter.state.lastRawPayload = '{"power":128,"energy":4770.36,"produced_energy":7.42}';
 
   await service.publishDebugPayloads();
 
-  const tableauPublish = publishedTopics.find((p) => p.topic === "envoy/123456789/debug/tableau_ext");
-  assert.equal(tableauPublish?.payload, '{"power":42,"energy":1.23}');
+  const generalMeterPublish = publishedTopics.find((p) => p.topic === "envoy/123456789/debug/general_meter");
+  assert.equal(generalMeterPublish?.payload, '{"power":128,"energy":4770.36,"produced_energy":7.42}');
 });
 
-test("publishDebugPayloads n'envoie pas tableau_ext si aucun payload n'a encore ete recu", async () => {
+test("publishDebugPayloads n'envoie pas general_meter si aucun payload n'a encore ete recu", async () => {
   const { service, publishedTopics } = createService({
     level: "debug",
-    tableauElecEnabled: true,
     api: { lastRawPayloads: {} },
   });
 
   await service.publishDebugPayloads();
 
-  const tableauPublish = publishedTopics.find((p) => p.topic === "envoy/123456789/debug/tableau_ext");
-  assert.equal(tableauPublish, undefined);
+  const generalMeterPublish = publishedTopics.find((p) => p.topic === "envoy/123456789/debug/general_meter");
+  assert.equal(generalMeterPublish, undefined);
 });

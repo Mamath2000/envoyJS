@@ -131,7 +131,15 @@ export function loadConfig() {
     generalMeterExportIndexField:
       String(cfg?.sensors?.general_meter?.export_index_field ?? "produced_energy").trim() || "produced_energy",
     generalMeterIndexUnit: String(cfg?.sensors?.general_meter?.index_unit ?? "kwh").trim().toLowerCase(),
-    generalMeterStateFile: String(cfg?.sensors?.general_meter?.state_file ?? "").trim() || undefined,
+    // Baseline fixe, relevée une fois pour toutes à l'installation physique du
+    // capteur (index brut du compteur au moment de la pose) — jamais recapturée
+    // ni mise à jour par le code ensuite.
+    generalMeterImportBaselineWh: Number.isFinite(Number(cfg?.sensors?.general_meter?.import_baseline_wh))
+      ? Number(cfg?.sensors?.general_meter?.import_baseline_wh)
+      : undefined,
+    generalMeterExportBaselineWh: Number.isFinite(Number(cfg?.sensors?.general_meter?.export_baseline_wh))
+      ? Number(cfg?.sensors?.general_meter?.export_baseline_wh)
+      : undefined,
 
     midnightReferencesStateFile: String(cfg?.state?.midnight_references_file ?? "").trim() || undefined,
 
