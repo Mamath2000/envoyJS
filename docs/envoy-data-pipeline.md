@@ -39,7 +39,7 @@ flowchart TD
 
 Depuis la refonte, `EnvoyApi.getAllEnvoyData()` ne fait plus que la normalisation brute (renommage de champs, aucun calcul croise). Tous les champs derives (grid, eco, courant, lifetimes corriges) sont calcules en un seul passage par `deriveEnvoyFields()` (src/envoyDerivedFields.js), que le tableau elec soit actif ou non (avec une correction nulle par defaut).
 
-**Attention, chemin separe pour le raw**: la boucle raw n'utilise ni `getAllEnvoyData()` ni `deriveEnvoyFields()`. Elle appelle `EnvoyApi.getRawData()` (src/envoyApi.js:365), une methode distincte qui ne recupere que 4 champs (`conso_all_eim_wNow`, `conso_net_eim_wNow`, `prod_eim_wNow`, `timestamp`), puis `applyTableauElecOnRawData()` (src/mqttService.js:501), qui **duplique** — dans son propre code, separement — la meme correction `+= signedPowerW` que `deriveEnvoyFields()` applique de son cote pour le flux complet. Les deux chemins arrivent au meme resultat pour les champs wNow communs, mais via deux implementations distinctes a maintenir en parallele.
+**Attention, chemin separe pour le raw**: la boucle raw n'utilise ni `getAllEnvoyData()` ni `deriveEnvoyFields()`. Elle appelle `EnvoyApi.getRawData()` (src/envoyApi.js:365), une methode distincte qui ne recupere que 4 champs (`conso_all_wNow`, `conso_net_wNow`, `prod_wNow`, `timestamp`), puis `applyTableauElecOnRawData()` (src/mqttService.js:501), qui **duplique** — dans son propre code, separement — la meme correction `+= signedPowerW` que `deriveEnvoyFields()` applique de son cote pour le flux complet. Les deux chemins arrivent au meme resultat pour les champs wNow communs, mais via deux implementations distinctes a maintenir en parallele.
 
 ## 2. Authentification et securite
 
@@ -220,9 +220,9 @@ Objet compact pour la boucle haute frequence:
 
 ```json
 {
-	"conso_all_eim_wNow": 1860,
-	"conso_net_eim_wNow": -420,
-	"prod_eim_wNow": 1260,
+	"conso_all_wNow": 1860,
+	"conso_net_wNow": -420,
+	"prod_wNow": 1260,
 	"timestamp": 1720000000
 }
 ```
@@ -230,6 +230,8 @@ Objet compact pour la boucle haute frequence:
 Reference code:
 
 - src/envoyApi.js:365 (getRawData)
+
+**Champ additionnel non present dans getRawData()**: `publishRawLoop` (src/mqttService.js:436) ajoute un 5e champ, `conso_net_energy_flow`, avant publication — il ne vient pas de l'Envoy mais du dernier `energy_flow` connu du capteur general (`this.generalMeter.state.energyFlow`, voir 8.3). Il n'apparait qu'une fois qu'au moins un message du capteur general a ete recu; absent avant ca.
 
 ### 4.2 Sortie getAllEnvoyData
 
@@ -508,13 +510,20 @@ Reference code:
 - base/serial/data/*_yesterday (retained)
 - base/serial/data/last_midnight_check (retained, technique — dernier jour de rollover, voir 5.2)
 
-**Convention de nommage `prod`/`conso_all`/`conso_net`/`grid`/`eco`/`tableau_ext`**: ces familles ne portent pas le suffixe `_eim` contrairement aux autres champs Envoy, et sont publiees sous un sous-topic dedie plutot qu'un nom de champ plat: `base/serial/data/prod/whLifetime`, `base/serial/data/conso_all/whLifetime`, `base/serial/data/conso_net/wNow`, `base/serial/data/grid/whLifetime`, `base/serial/data/eco/whLifetime`, `base/serial/data/tableau_ext/wNow`, etc. (le nom de champ interne contient directement le `/`). Raison: une fois passees par `deriveEnvoyFields()`/`deriveFullData()`, ces valeurs sont recopiees/corrigees ou entierement recalculees (`+= signedPowerW`/`energyOffsetWh` pour `conso_all`/`conso_net`, conservation d'energie pour `grid`/`eco`, calcul direct depuis l'etat tableau ext pour `tableau_ext`) — ce ne sont plus de simples alias d'un compteur `eim` d'Envoy, le suffixe n'aurait donc plus de sens. A l'inverse, `getRawData()` (8.3) garde `prod_eim_wNow`/`conso_all_eim_wNow`/`conso_net_eim_wNow`: c'est une lecture brute, non corrigee, ou `eim` reste exact. `grid_eim`/`eco_eim`/`import_eim` (bases TOR) ont tous ete entierement retires, voir 6.3 "Historique".
+**Convention de nommage `prod`/`conso_all`/`conso_net`/`grid`/`eco`/`tableau_ext`**: ces familles sont publiees sous un sous-topic dedie plutot qu'un nom de champ plat: `base/serial/data/prod/whLifetime`, `base/serial/data/conso_all/whLifetime`, `base/serial/data/conso_net/wNow`, `base/serial/data/grid/whLifetime`, `base/serial/data/eco/whLifetime`, `base/serial/data/tableau_ext/wNow`, etc. (le nom de champ interne contient directement le `/`). `getRawData()` (8.3) publie de son cote `prod_wNow`/`conso_all_wNow`/`conso_net_wNow`: ces champs ne portent plus le suffixe `_eim` (mesureType interne de l'Envoy) — il a ete retire des topics raw pour ne pas exposer un detail d'implementation Enphase dans le nom public. `grid_eim`/`eco_eim`/`import_eim` (bases TOR) ont tous ete entierement retires, voir 6.3 "Historique".
 
 **Pas de champ `*_kwhLifetime`**: le kWh n'est jamais publie comme champ MQTT — seul le Wh (`whLifetime`) l'est. Le kWh est calcule a l'affichage par Home Assistant via un sensor "virtuel" (`source_field` + `value_template` de division par 1000, voir `src/device-def/sensors-def.json` et 6.3 "Champs kWh").
 
 ### 8.3 Donnees raw
 
 - base/serial/raw/field (non retained)
+
+Champs effectivement publies (voir 4.1):
+
+- `prod_wNow`, `conso_net_wNow`, `conso_all_wNow`, `timestamp` — issus de `getRawData()`, republies a chaque tick `high_frequency.interval_ms`
+- `conso_net_energy_flow` — ajoute par `publishRawLoop`/`publishGeneralMeterRawPower` depuis le dernier etat connu du capteur general (`producing`/`consuming`), absent tant qu'aucun message du capteur n'a ete recu
+
+`conso_net_wNow`/`conso_all_wNow`/`conso_net_energy_flow` sont en realite republies deux fois plus vite que ce tick: immediatement a chaque message MQTT du capteur general (`publishGeneralMeterRawPower`, appele depuis `installMqttListeners`), en plus du heartbeat au rythme Envoy.
 
 ### 8.4 Capteurs JSON dedies
 

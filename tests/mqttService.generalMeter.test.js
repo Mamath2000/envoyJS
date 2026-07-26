@@ -202,18 +202,18 @@ test("les registres import et export sont completement independants", () => {
 
 test("publishGeneralMeterRawPower calcule conso_net/conso_all a partir de la puissance et de prod en cache", async () => {
   const { service, publishedTopics } = createService();
-  service.generalMeter.state.lastProdEimWNow = 500;
+  service.generalMeter.state.lastProdWNow = 500;
 
   await service.publishGeneralMeterRawPower(3260);
 
   const byTopic = Object.fromEntries(publishedTopics.map((p) => [p.topic, p.payload]));
-  assert.equal(byTopic["envoy/123456789/raw/conso_net_eim_wNow"], "3260");
-  assert.equal(byTopic["envoy/123456789/raw/conso_all_eim_wNow"], "3760");
+  assert.equal(byTopic["envoy/123456789/raw/conso_net_wNow"], "3260");
+  assert.equal(byTopic["envoy/123456789/raw/conso_all_wNow"], "3760");
 });
 
 test("publishGeneralMeterRawPower republie aussi conso_net_energy_flow si connu", async () => {
   const { service, publishedTopics } = createService();
-  service.generalMeter.state.lastProdEimWNow = 500;
+  service.generalMeter.state.lastProdWNow = 500;
   service.generalMeter.state.energyFlow = "producing";
 
   await service.publishGeneralMeterRawPower(-3260);
@@ -224,7 +224,7 @@ test("publishGeneralMeterRawPower republie aussi conso_net_energy_flow si connu"
 
 test("publishGeneralMeterRawPower n'ecrit pas conso_net_energy_flow tant qu'aucun message n'a ete recu", async () => {
   const { service, publishedTopics } = createService();
-  service.generalMeter.state.lastProdEimWNow = 500;
+  service.generalMeter.state.lastProdWNow = 500;
 
   await service.publishGeneralMeterRawPower(3260);
 
@@ -234,7 +234,7 @@ test("publishGeneralMeterRawPower n'ecrit pas conso_net_energy_flow tant qu'aucu
 
 test("un message MQTT du capteur general met a jour l'etat et publie immediatement, sans attendre le tick Envoy", async () => {
   const { service, publishedTopics } = createService();
-  service.generalMeter.state.lastProdEimWNow = 500;
+  service.generalMeter.state.lastProdWNow = 500;
 
   let messageHandler;
   const fakeClient = {
@@ -257,8 +257,8 @@ test("un message MQTT du capteur general met a jour l'etat et publie immediateme
   await flushMicrotasks();
 
   const byTopic = Object.fromEntries(publishedTopics.map((p) => [p.topic, p.payload]));
-  assert.equal(byTopic["envoy/123456789/raw/conso_net_eim_wNow"], "3260");
-  assert.equal(byTopic["envoy/123456789/raw/conso_all_eim_wNow"], "3760");
+  assert.equal(byTopic["envoy/123456789/raw/conso_net_wNow"], "3260");
+  assert.equal(byTopic["envoy/123456789/raw/conso_all_wNow"], "3760");
 });
 
 test("un message MQTT du capteur general met a jour voltage/current et calcule import/export depuis la baseline configurée", () => {
@@ -313,15 +313,15 @@ test("un message sur un autre topic n'affecte pas l'etat du capteur general", ()
   assert.equal(service.generalMeter.state.currentPowerW, 42);
 });
 
-test("publishRawLoop republie prod/conso_net/conso_all et met a jour lastProdEimWNow", async () => {
+test("publishRawLoop republie prod/conso_net/conso_all et met a jour lastProdWNow", async () => {
   const { service, publishedTopics } = createService({
     api: {
       getRawData: async () => {
         service.running = false; // une seule iteration de la boucle
         return {
-          prod_eim_wNow: 1200,
-          conso_net_eim_wNow: -999, // valeur TOR, doit etre ecrasee
-          conso_all_eim_wNow: -999, // idem
+          prod_wNow: 1200,
+          conso_net_wNow: -999, // valeur TOR, doit etre ecrasee
+          conso_all_wNow: -999, // idem
           timestamp: 1720000000,
         };
       },
@@ -333,11 +333,11 @@ test("publishRawLoop republie prod/conso_net/conso_all et met a jour lastProdEim
   await service.publishRawLoop();
 
   const byTopic = Object.fromEntries(publishedTopics.map((p) => [p.topic, p.payload]));
-  assert.equal(byTopic["envoy/123456789/raw/prod_eim_wNow"], "1200");
-  assert.equal(byTopic["envoy/123456789/raw/conso_net_eim_wNow"], "300");
-  assert.equal(byTopic["envoy/123456789/raw/conso_all_eim_wNow"], "1500");
+  assert.equal(byTopic["envoy/123456789/raw/prod_wNow"], "1200");
+  assert.equal(byTopic["envoy/123456789/raw/conso_net_wNow"], "300");
+  assert.equal(byTopic["envoy/123456789/raw/conso_all_wNow"], "1500");
   assert.equal(byTopic["envoy/123456789/raw/timestamp"], "1720000000");
-  assert.equal(service.generalMeter.state.lastProdEimWNow, 1200);
+  assert.equal(service.generalMeter.state.lastProdWNow, 1200);
 });
 
 test("publishRawLoop republie conso_net_energy_flow en heartbeat depuis le dernier etat connu", async () => {
@@ -345,7 +345,7 @@ test("publishRawLoop republie conso_net_energy_flow en heartbeat depuis le derni
     api: {
       getRawData: async () => {
         service.running = false;
-        return { prod_eim_wNow: 1200 };
+        return { prod_wNow: 1200 };
       },
     },
   });
@@ -364,7 +364,7 @@ test("publishRawLoop n'ecrit pas conso_net_energy_flow tant qu'aucun message du 
     api: {
       getRawData: async () => {
         service.running = false;
-        return { prod_eim_wNow: 1200 };
+        return { prod_wNow: 1200 };
       },
     },
   });
@@ -376,12 +376,12 @@ test("publishRawLoop n'ecrit pas conso_net_energy_flow tant qu'aucun message du 
   assert.equal(byTopic["envoy/123456789/raw/conso_net_energy_flow"], undefined);
 });
 
-test("publishRawLoop clampe prod_eim_wNow sous 5W a 0, repercute sur conso_all", async () => {
+test("publishRawLoop clampe prod_wNow sous 5W a 0, repercute sur conso_all", async () => {
   const { service, publishedTopics } = createService({
     api: {
       getRawData: async () => {
         service.running = false;
-        return { prod_eim_wNow: 3, conso_net_eim_wNow: 0, conso_all_eim_wNow: 0 };
+        return { prod_wNow: 3, conso_net_wNow: 0, conso_all_wNow: 0 };
       },
     },
   });
@@ -391,9 +391,9 @@ test("publishRawLoop clampe prod_eim_wNow sous 5W a 0, repercute sur conso_all",
   await service.publishRawLoop();
 
   const byTopic = Object.fromEntries(publishedTopics.map((p) => [p.topic, p.payload]));
-  assert.equal(byTopic["envoy/123456789/raw/prod_eim_wNow"], "0");
-  assert.equal(byTopic["envoy/123456789/raw/conso_all_eim_wNow"], "100");
-  assert.equal(service.generalMeter.state.lastProdEimWNow, 0);
+  assert.equal(byTopic["envoy/123456789/raw/prod_wNow"], "0");
+  assert.equal(byTopic["envoy/123456789/raw/conso_all_wNow"], "100");
+  assert.equal(service.generalMeter.state.lastProdWNow, 0);
 });
 
 test("deriveFullData integre conso_net/current/grid/eco/conso_all depuis l'etat du capteur général — voltage et import ne sont plus publiés", () => {

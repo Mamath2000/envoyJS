@@ -69,7 +69,7 @@ test("deriveEnvoyFields recalcule conso_all/wNow depuis prod + solde net (au lie
   assert.equal(out["conso_net/wNow"], 700);
 });
 
-test("deriveEnvoyFields: conso_all/wNow reste coherent avec conso_all_eim_wNow (raw) meme a l'export", () => {
+test("deriveEnvoyFields: conso_all/wNow reste coherent avec conso_all_wNow (raw) meme a l'export", () => {
   const base = { "conso_all/wNow": 1500, "prod/wNow": 1200 };
 
   const out = deriveEnvoyFields(base, { generalMeterPowerW: -400 }); // export

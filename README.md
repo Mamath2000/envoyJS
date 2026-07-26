@@ -145,8 +145,8 @@ Base : `mqtt.base_topic` + `envoy.serial`.
 Exemple :
 
 - `envoy/123456789/lwt`
-- `envoy/123456789/data/prod_eim_wNow`
-- `envoy/123456789/raw/conso_net_eim_wNow`
+- `envoy/123456789/raw/prod_wNow`
+- `envoy/123456789/raw/conso_net_wNow`
 
 ### Valeurs journalières
 

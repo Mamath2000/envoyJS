@@ -388,9 +388,9 @@ export class EnvoyApi {
     const totalConsumption = consumptionData["total-consumption"] ?? {};
 
     return {
-      conso_all_eim_wNow: totalConsumption?.currW ?? 0,
-      conso_net_eim_wNow: netConsumptionMeter?.instantaneousDemand ?? 0,
-      prod_eim_wNow: productionMeter?.instantaneousDemand ?? 0,
+      conso_all_wNow: totalConsumption?.currW ?? 0,
+      conso_net_wNow: netConsumptionMeter?.instantaneousDemand ?? 0,
+      prod_wNow: productionMeter?.instantaneousDemand ?? 0,
       timestamp: Math.floor(Date.now() / 1000),
     };
   }

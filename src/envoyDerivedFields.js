@@ -52,7 +52,7 @@ export function deriveEnvoyFields(rawFields, inputs = {}) {
       adjusted["eco/wNow"] = netPowerW < 0 ? prodW + netPowerW : prodW;
 
       // conso_all/wNow ("consommation totale du foyer, tous circuits"): meme
-      // identite que conso_all_eim_wNow cote raw (voir
+      // identite que conso_all_wNow cote raw (voir
       // mqttService.publishGeneralMeterRawPower/publishRawLoop) — ce qui est
       // consomme = ce qui est produit + solde net (importe si positif, deduit
       // si negatif/export). Remplace ici la lecture directe du CT

@@ -82,10 +82,10 @@ export class EnvoyMqttService {
         // parseGeneralMeterPayload) et republié tel quel jusqu'à HA (voir
         // getExternalInputs / deriveEnvoyFields).
         energyFlow: undefined,
-        // Dernier prod_eim_wNow connu (rafraichi par publishRawLoop au rythme
-        // du polling Envoy), utilise pour calculer conso_all_eim_wNow des
+        // Dernier prod_wNow connu (rafraichi par publishRawLoop au rythme
+        // du polling Envoy), utilise pour calculer conso_all_wNow des
         // qu'un nouveau message du capteur general arrive.
-        lastProdEimWNow: 0,
+        lastProdWNow: 0,
         // Dernier payload brut recu (avant parsing), pour publication en mode
         // debug (voir publishDebugPayloads). Non persisté.
         lastRawPayload: undefined,
@@ -408,7 +408,7 @@ export class EnvoyMqttService {
         // Publication immediate (pas d'attente du tick de publishRawLoop): le
         // capteur general pousse ses messages bien plus vite (~3/s) que le
         // polling Envoy — decoupler leur publication du timer permet a
-        // conso_net_eim_wNow/conso_all_eim_wNow de suivre ce rythme.
+        // conso_net_wNow/conso_all_wNow de suivre ce rythme.
         this.publishGeneralMeterRawPower(powerW).catch((err) => {
           this.log.warn("publication raw capteur général échouée", {
             message: err?.message ?? String(err),
@@ -420,10 +420,10 @@ export class EnvoyMqttService {
 
   async publishGeneralMeterRawPower(powerW) {
     const netW = Math.round(powerW);
-    const allW = Math.round(this.generalMeter.state.lastProdEimWNow + powerW);
+    const allW = Math.round(this.generalMeter.state.lastProdWNow + powerW);
 
-    await this.publish(`${this.topicRaw}/conso_net_eim_wNow`, String(netW), { retain: false, debug: false });
-    await this.publish(`${this.topicRaw}/conso_all_eim_wNow`, String(allW), { retain: false, debug: false });
+    await this.publish(`${this.topicRaw}/conso_net_wNow`, String(netW), { retain: false, debug: false });
+    await this.publish(`${this.topicRaw}/conso_all_wNow`, String(allW), { retain: false, debug: false });
 
     if (this.generalMeter.state.energyFlow != null) {
       await this.publish(`${this.topicRaw}/conso_net_energy_flow`, this.generalMeter.state.energyFlow, {
@@ -443,15 +443,15 @@ export class EnvoyMqttService {
       try {
         const rawData = await this.api.getRawData({ debug: false });
 
-        // prod_eim_wNow reste borné par le rythme de polling Envoy (source
+        // prod_wNow reste borné par le rythme de polling Envoy (source
         // unique de la production) — bruit de veille clampé à 0 comme avant.
-        const prodRaw = Number(rawData.prod_eim_wNow);
+        const prodRaw = Number(rawData.prod_wNow);
         const prodW = Number.isFinite(prodRaw) && prodRaw < 5 ? 0 : prodRaw;
         if (Number.isFinite(prodW)) {
-          this.generalMeter.state.lastProdEimWNow = prodW;
+          this.generalMeter.state.lastProdWNow = prodW;
         }
 
-        // conso_net_eim_wNow/conso_all_eim_wNow sont republiés ici comme
+        // conso_net_wNow/conso_all_wNow sont republiés ici comme
         // heartbeat (au rythme du tick Envoy) à partir du dernier état connu
         // du capteur général — leur publication "rapide" a lieu par ailleurs
         // dès reception d'un message MQTT du capteur (voir
@@ -461,9 +461,9 @@ export class EnvoyMqttService {
           : 0;
         const adjustedRawData = {
           ...rawData,
-          prod_eim_wNow: prodW,
-          conso_net_eim_wNow: Math.round(netW),
-          conso_all_eim_wNow: Math.round(this.generalMeter.state.lastProdEimWNow + netW),
+          prod_wNow: prodW,
+          conso_net_wNow: Math.round(netW),
+          conso_all_wNow: Math.round(this.generalMeter.state.lastProdWNow + netW),
         };
         if (this.generalMeter.state.energyFlow != null) {
           adjustedRawData.conso_net_energy_flow = this.generalMeter.state.energyFlow;
