@@ -39,9 +39,10 @@ sensors:
     
   general_meter:
     topic: "zigbee2mqtt/general"           # capteur bidirectionnel place sur le general
-    power_field: "power"                   # puissance signee instantanee (W), positif = import
+    power_field: "power"                   # puissance instantanee (W), non signee: le sens vient de energy_flow_field
     voltage_field: "voltage"
     current_field: "current"
+    energy_flow_field: "energy_flow"       # "producing"/"consuming": signe power_field (négatif si producing), remonté tel quel a HA (conso_net/energy_flow)
     import_index_field: "energy"           # index cumulé importé
     export_index_field: "produced_energy"  # index cumulé exporté/injecté ("to_grid")
     index_unit: "kwh"                      # "kwh", "wh" ou "auto"

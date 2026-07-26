@@ -126,6 +126,8 @@ export function loadConfig() {
     generalMeterPowerField: String(cfg?.sensors?.general_meter?.power_field ?? "power").trim() || "power",
     generalMeterVoltageField: String(cfg?.sensors?.general_meter?.voltage_field ?? "voltage").trim() || "voltage",
     generalMeterCurrentField: String(cfg?.sensors?.general_meter?.current_field ?? "current").trim() || "current",
+    generalMeterEnergyFlowField:
+      String(cfg?.sensors?.general_meter?.energy_flow_field ?? "energy_flow").trim() || "energy_flow",
     generalMeterImportIndexField:
       String(cfg?.sensors?.general_meter?.import_index_field ?? "energy").trim() || "energy",
     generalMeterExportIndexField:

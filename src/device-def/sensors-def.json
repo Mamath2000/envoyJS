@@ -69,6 +69,12 @@
     "state_class": "measurement",
     "icon": "mdi:flash"
   },
+  "conso_net/energy_flow": {
+    "name": "Energy Flow",
+    "platform": "sensor",
+    "icon": "mdi:swap-horizontal",
+    "value_template": "{{ value }}"
+  },
 
   "grid/wNow": {
     "name": "Current Power to Grid",

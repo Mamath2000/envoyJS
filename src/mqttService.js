@@ -69,6 +69,7 @@ export class EnvoyMqttService {
       powerField: this.config.generalMeterPowerField || "power",
       voltageField: this.config.generalMeterVoltageField || "voltage",
       currentField: this.config.generalMeterCurrentField || "current",
+      energyFlowField: this.config.generalMeterEnergyFlowField || "energy_flow",
       importIndexField: this.config.generalMeterImportIndexField || "energy",
       exportIndexField: this.config.generalMeterExportIndexField || "produced_energy",
       indexUnit: this.config.generalMeterIndexUnit || "kwh",
@@ -76,6 +77,11 @@ export class EnvoyMqttService {
         currentPowerW: undefined,
         voltageV: undefined,
         currentA: undefined,
+        // Sens du flux tel que remonté par le capteur ("producing"/"consuming"),
+        // utilisé pour signer currentPowerW dès la lecture du payload (voir
+        // parseGeneralMeterPayload) et republié tel quel jusqu'à HA (voir
+        // getExternalInputs / deriveEnvoyFields).
+        energyFlow: undefined,
         // Dernier prod_eim_wNow connu (rafraichi par publishRawLoop au rythme
         // du polling Envoy), utilise pour calculer conso_all_eim_wNow des
         // qu'un nouveau message du capteur general arrive.
@@ -380,12 +386,14 @@ export class EnvoyMqttService {
       if (this.generalMeter.topic && topic === this.generalMeter.topic) {
         this.generalMeter.state.lastRawPayload = payload;
 
-        const { powerW, voltageV, currentA, importWh, exportWh } = this.parseGeneralMeterPayload(payload);
+        const { powerW, voltageV, currentA, energyFlow, importWh, exportWh } =
+          this.parseGeneralMeterPayload(payload);
         if (!Number.isFinite(powerW)) return;
 
         this.generalMeter.state.currentPowerW = powerW;
         if (Number.isFinite(voltageV)) this.generalMeter.state.voltageV = voltageV;
         if (Number.isFinite(currentA)) this.generalMeter.state.currentA = currentA;
+        if (energyFlow != null) this.generalMeter.state.energyFlow = energyFlow;
 
         // energyWh = brut - baseline, calcule des la lecture du payload (voir
         // applyGeneralMeterReading) — la baseline elle-meme est une constante
@@ -695,13 +703,29 @@ export class EnvoyMqttService {
     return looksLikeKwh ? numeric * 1000 : numeric;
   }
 
+  // Le capteur general remonte "power" comme une magnitude non signée: le sens
+  // du flux (import/export) est porte separement par energy_flow
+  // ("producing"/"consuming"). On signe donc powerW ici, des la lecture du
+  // payload — negatif en production/export, comme attendu partout ailleurs
+  // dans le code (voir deriveEnvoyFields: netPowerW < 0 => export).
+  signGeneralMeterPower(powerW, energyFlow) {
+    if (!Number.isFinite(powerW)) return powerW;
+    const flow = String(energyFlow ?? "").trim().toLowerCase();
+    if (flow === "producing") return -Math.abs(powerW);
+    if (flow === "consuming") return Math.abs(powerW);
+    return powerW;
+  }
+
   parseGeneralMeterPayload(payload) {
     const strPayload = String(payload ?? "").trim();
-    if (!strPayload) return { powerW: NaN, voltageV: NaN, currentA: NaN, importWh: NaN, exportWh: NaN };
+    if (!strPayload) {
+      return { powerW: NaN, voltageV: NaN, currentA: NaN, energyFlow: undefined, importWh: NaN, exportWh: NaN };
+    }
 
     let powerW = NaN;
     let voltageV = NaN;
     let currentA = NaN;
+    let energyFlow;
     let importWh = NaN;
     let exportWh = NaN;
 
@@ -710,6 +734,11 @@ export class EnvoyMqttService {
       powerW = Number(this.extractByPath(parsed, this.generalMeter.powerField));
       voltageV = Number(this.extractByPath(parsed, this.generalMeter.voltageField));
       currentA = Number(this.extractByPath(parsed, this.generalMeter.currentField));
+
+      const rawEnergyFlow = this.extractByPath(parsed, this.generalMeter.energyFlowField);
+      if (rawEnergyFlow != null) energyFlow = String(rawEnergyFlow).trim().toLowerCase();
+
+      powerW = this.signGeneralMeterPower(powerW, energyFlow);
 
       const rawImport = this.extractByPath(parsed, this.generalMeter.importIndexField);
       importWh = this.normalizeGeneralMeterIndexWh(rawImport);
@@ -727,7 +756,7 @@ export class EnvoyMqttService {
       });
     }
 
-    return { powerW, voltageV, currentA, importWh, exportWh };
+    return { powerW, voltageV, currentA, energyFlow, importWh, exportWh };
   }
 
   // Calcule energyWh = brut - baseline pour un registre du capteur general
@@ -771,6 +800,7 @@ export class EnvoyMqttService {
     return {
       generalMeterPowerW: this.generalMeter.state.currentPowerW,
       generalMeterCurrentA: this.generalMeter.state.currentA,
+      generalMeterEnergyFlow: this.generalMeter.state.energyFlow,
       generalMeterImportWhLifetime: Number.isFinite(importState.baselineWh) ? importState.energyWh : undefined,
       generalMeterExportWhLifetime: Number.isFinite(exportState.baselineWh) ? exportState.energyWh : undefined,
       prodBaselineWh: this.config.prodBaselineWh,

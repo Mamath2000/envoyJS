@@ -68,6 +68,65 @@ test("parseGeneralMeterPayload extrait la puissance depuis le payload reel du ca
   assert.equal(powerW, 3260);
 });
 
+test("parseGeneralMeterPayload signe power negativement quand energy_flow vaut producing", () => {
+  const { service } = createService();
+  const payload = JSON.stringify({ power: 3260, energy_flow: "producing" });
+
+  const { powerW, energyFlow } = service.parseGeneralMeterPayload(payload);
+
+  assert.equal(powerW, -3260);
+  assert.equal(energyFlow, "producing");
+});
+
+test("parseGeneralMeterPayload garde power positif quand energy_flow vaut consuming", () => {
+  const { powerW, energyFlow } = new EnvoyMqttService({
+    config: {
+      mqttBaseTopic: "envoy",
+      serialNumber: "123456789",
+      generalMeterTopic: "zigbee2mqtt/general",
+      logLevel: "silent",
+    },
+    log: createSilentLog(),
+  }).parseGeneralMeterPayload(SAMPLE_PAYLOAD);
+
+  assert.equal(powerW, 3260);
+  assert.equal(energyFlow, "consuming");
+});
+
+test("parseGeneralMeterPayload force la magnitude meme si power arrive deja negatif du capteur", () => {
+  const { service } = createService();
+  const payload = JSON.stringify({ power: -3260, energy_flow: "producing" });
+
+  const { powerW } = service.parseGeneralMeterPayload(payload);
+
+  assert.equal(powerW, -3260);
+});
+
+test("un message MQTT du capteur general applique le signe de energy_flow sur currentPowerW", () => {
+  const { service } = createService();
+
+  let messageHandler;
+  service.installMqttListeners({
+    subscribe() {},
+    on(event, handler) {
+      if (event === "message") messageHandler = handler;
+    },
+  });
+
+  const producingPayload = JSON.stringify({ power: 500, energy_flow: "producing" });
+  messageHandler(Buffer.from("zigbee2mqtt/general"), Buffer.from(producingPayload));
+
+  assert.equal(service.generalMeter.state.currentPowerW, -500);
+  assert.equal(service.generalMeter.state.energyFlow, "producing");
+});
+
+test("getExternalInputs expose generalMeterEnergyFlow depuis le dernier message recu", () => {
+  const { service } = createService();
+  service.generalMeter.state.energyFlow = "producing";
+
+  assert.equal(service.getExternalInputs().generalMeterEnergyFlow, "producing");
+});
+
 test("parseGeneralMeterPayload renvoie NaN sur un payload illisible", () => {
   const { service } = createService();
   const { powerW } = service.parseGeneralMeterPayload("pas du json");

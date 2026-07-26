@@ -58,6 +58,14 @@ export function deriveEnvoyFields(rawFields, inputs = {}) {
     adjusted["conso_net/current"] = Number(generalMeterCurrentA.toFixed(3));
   }
 
+  // Sens du flux tel que remonté par le capteur general lui-meme
+  // ("producing"/"consuming"), déjà utilisé en interne pour signer
+  // generalMeterPowerW (voir mqttService.parseGeneralMeterPayload) —
+  // republié tel quel pour que HA affiche aussi ce champ source.
+  if (inputs.generalMeterEnergyFlow != null) {
+    adjusted["conso_net/energy_flow"] = inputs.generalMeterEnergyFlow;
+  }
+
   // Index energie
   const prodWhLifetime = Number(adjusted["prod/whLifetime"]);
 

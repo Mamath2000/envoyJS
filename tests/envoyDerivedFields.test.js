@@ -39,6 +39,18 @@ test("deriveEnvoyFields calcule conso_net/grid/eco instantanes depuis generalMet
   assert.equal(out["eco/wNow"], 1200);
 });
 
+test("deriveEnvoyFields republie generalMeterEnergyFlow tel quel dans conso_net/energy_flow", () => {
+  const out = deriveEnvoyFields({}, { generalMeterPowerW: -400, generalMeterEnergyFlow: "producing" });
+
+  assert.equal(out["conso_net/energy_flow"], "producing");
+});
+
+test("deriveEnvoyFields n'ajoute pas conso_net/energy_flow si absent des inputs", () => {
+  const out = deriveEnvoyFields({}, { generalMeterPowerW: 700 });
+
+  assert.equal(out["conso_net/energy_flow"], undefined);
+});
+
 test("deriveEnvoyFields recopie current depuis le capteur général, sans calcul I=P/U (voltage rationalisé sur prod/voltage)", () => {
   const out = deriveEnvoyFields({}, { generalMeterPowerW: 460, generalMeterCurrentA: 1.997 });
 
