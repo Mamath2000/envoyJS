@@ -454,7 +454,6 @@ export class EnvoyApi {
     // index (import/export) du capteur general, sans correction a appliquer.
     const renameMapping = {
       instantaneousDemand: "conso_net/wNow",
-      voltage: "conso_net/voltage",
       current: "conso_net/current",
     };
 
@@ -472,7 +471,6 @@ export class EnvoyApi {
     const renameMapping = {
       currW: "conso_all/wNow",
       rmsCurrent: "conso_all/rmsCurrent",
-      rmsVoltage: "conso_all/rmsVoltage",
       whDlvdCum: "conso_all/whLifetime",
     };
 

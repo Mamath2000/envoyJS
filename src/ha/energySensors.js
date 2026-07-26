@@ -75,7 +75,7 @@ export async function publishConsumptionSensors({ mqtt, topic, data, log }) {
     energy_flow: wNow > 0 ? "consuming" : "producing",
     power_cons: Math.max(0, wNow),
     power: data["conso_net/wNow"],
-    voltage: data["conso_net/voltage"],
+    voltage: data["prod/voltage"],
     current: data["conso_net/current"],
   };
 
