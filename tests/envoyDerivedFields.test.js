@@ -12,8 +12,8 @@ test("deriveEnvoyFields sans capteur général: conso_net reste la valeur brute,
   const out = deriveEnvoyFields(base);
 
   assert.equal(out["conso_net/wNow"], -400);
-  assert.equal(out["grid/wNow"], undefined);
-  assert.equal(out["grid/wNow_binary"], undefined);
+  assert.equal(out["to_grid/wNow"], undefined);
+  assert.equal(out["to_grid/wNow_binary"], undefined);
   assert.equal(out["eco/wNow"], undefined);
 });
 
@@ -23,8 +23,9 @@ test("deriveEnvoyFields calcule conso_net/grid/eco instantanes depuis generalMet
   const out = deriveEnvoyFields(base, { generalMeterPowerW: -400 });
 
   assert.equal(out["conso_net/wNow"], -400);
-  assert.equal(out["grid/wNow"], 400);
-  assert.equal(out["grid/wNow_binary"], 0);
+  assert.equal(out["to_grid/wNow"], 400);
+  assert.equal(out["to_grid/wNow_binary"], 0);
+  assert.equal(out["from_grid/wNow"], 0); // export: rien tiré du réseau
   assert.equal(out["eco/wNow"], 800);
 });
 
@@ -34,8 +35,9 @@ test("deriveEnvoyFields calcule conso_net/grid/eco instantanes depuis generalMet
   const out = deriveEnvoyFields(base, { generalMeterPowerW: 700 });
 
   assert.equal(out["conso_net/wNow"], 700);
-  assert.equal(out["grid/wNow"], 0);
-  assert.equal(out["grid/wNow_binary"], 1);
+  assert.equal(out["to_grid/wNow"], 0);
+  assert.equal(out["to_grid/wNow_binary"], 1);
+  assert.equal(out["from_grid/wNow"], 700); // import: puissance tirée du réseau
   assert.equal(out["eco/wNow"], 1200);
 });
 
@@ -58,7 +60,24 @@ test("deriveEnvoyFields recopie current depuis le capteur général, sans calcul
   assert.equal(out["conso_net/voltage"], undefined);
 });
 
-test("deriveEnvoyFields laisse conso_all/wNow inchangé (plus de correction, tableau elec retiré)", () => {
+test("deriveEnvoyFields recalcule conso_all/wNow depuis prod + solde net (au lieu du CT total-consumption Envoy, aveugle au tableau ext)", () => {
+  const base = { "conso_all/wNow": 1500, "prod/wNow": 1200 };
+
+  const out = deriveEnvoyFields(base, { generalMeterPowerW: 700 }); // import
+
+  assert.equal(out["conso_all/wNow"], 1900); // prod(1200) + import(700), plus le CT brut (1500)
+  assert.equal(out["conso_net/wNow"], 700);
+});
+
+test("deriveEnvoyFields: conso_all/wNow reste coherent avec conso_all_eim_wNow (raw) meme a l'export", () => {
+  const base = { "conso_all/wNow": 1500, "prod/wNow": 1200 };
+
+  const out = deriveEnvoyFields(base, { generalMeterPowerW: -400 }); // export
+
+  assert.equal(out["conso_all/wNow"], 800); // prod(1200) + netPowerW(-400), meme identite que le raw
+});
+
+test("deriveEnvoyFields laisse conso_all/wNow inchangé si prod/wNow est absent (aucune correction possible)", () => {
   const base = { "conso_all/wNow": 1500 };
 
   const out = deriveEnvoyFields(base, { generalMeterPowerW: 700 });
@@ -76,7 +95,7 @@ test("deriveEnvoyFields calcule grid(togrid)/eco/conso_all/conso_net (whLifetime
   });
 
   assert.equal(out["import/whLifetime"], undefined); // plus de topic/sensor dedié
-  assert.equal(out["grid/whLifetime"], 3_000); // export, lu directement
+  assert.equal(out["to_grid/whLifetime"], 3_000); // export, lu directement
   assert.equal(out["eco/whLifetime"], 9_000); // prod(12_000) - export(3_000)
   assert.equal(out["conso_all/whLifetime"], 24_000); // import(15_000, interne) + eco(9_000)
   assert.equal(out["conso_net/whLifetime"], 12_000); // import(15_000, interne) - export(3_000)
@@ -88,7 +107,7 @@ test("deriveEnvoyFields ne calcule aucun whLifetime derive si le capteur génér
   const out = deriveEnvoyFields(base, {});
 
   assert.equal(out["import/whLifetime"], undefined);
-  assert.equal(out["grid/whLifetime"], undefined);
+  assert.equal(out["to_grid/whLifetime"], undefined);
   assert.equal(out["eco/whLifetime"], undefined);
   assert.equal(out["conso_all/whLifetime"], undefined);
   assert.equal(out["conso_net/whLifetime"], undefined);
@@ -98,7 +117,7 @@ test("deriveEnvoyFields: import seul (sans export) ne produit aucun champ whLife
   const out = deriveEnvoyFields({}, { generalMeterImportWhLifetime: 15_000 });
 
   assert.equal(out["import/whLifetime"], undefined);
-  assert.equal(out["grid/whLifetime"], undefined);
+  assert.equal(out["to_grid/whLifetime"], undefined);
   assert.equal(out["eco/whLifetime"], undefined);
   assert.equal(out["conso_all/whLifetime"], undefined);
   assert.equal(out["conso_net/whLifetime"], undefined);

@@ -85,7 +85,7 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
       "conso_all/whLifetime": 1000,
       "conso_net/whLifetime": 500,
       "prod/whLifetime": 2000,
-      "grid/whLifetime": 300,
+      "to_grid/whLifetime": 300,
       "eco/whLifetime": 700,
     };
 
@@ -100,7 +100,7 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
       "conso_all/whLifetime": 1800,
       "conso_net/whLifetime": 900,
       "prod/whLifetime": 3000,
-      "grid/whLifetime": 450,
+      "to_grid/whLifetime": 450,
       "eco/whLifetime": 1100,
     };
 
@@ -112,7 +112,7 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
     assert.equal(service.midnightReferences["conso_all/yesterday"], 800); // 1800-1000
     assert.equal(service.midnightReferences["conso_net/yesterday"], 400); // 900-500
     assert.equal(service.midnightReferences["prod/yesterday"], 1000); // 3000-2000
-    assert.equal(service.midnightReferences["grid/yesterday"], 150); // 450-300
+    assert.equal(service.midnightReferences["to_grid/yesterday"], 150); // 450-300
     assert.equal(service.midnightReferences["eco/yesterday"], 400); // 1100-700
 
     // Nouvelle reference _00h = valeur courante au moment de la detection.

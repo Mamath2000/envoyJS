@@ -211,6 +211,27 @@ test("publishGeneralMeterRawPower calcule conso_net/conso_all a partir de la pui
   assert.equal(byTopic["envoy/123456789/raw/conso_all_eim_wNow"], "3760");
 });
 
+test("publishGeneralMeterRawPower republie aussi conso_net_energy_flow si connu", async () => {
+  const { service, publishedTopics } = createService();
+  service.generalMeter.state.lastProdEimWNow = 500;
+  service.generalMeter.state.energyFlow = "producing";
+
+  await service.publishGeneralMeterRawPower(-3260);
+
+  const byTopic = Object.fromEntries(publishedTopics.map((p) => [p.topic, p.payload]));
+  assert.equal(byTopic["envoy/123456789/raw/conso_net_energy_flow"], "producing");
+});
+
+test("publishGeneralMeterRawPower n'ecrit pas conso_net_energy_flow tant qu'aucun message n'a ete recu", async () => {
+  const { service, publishedTopics } = createService();
+  service.generalMeter.state.lastProdEimWNow = 500;
+
+  await service.publishGeneralMeterRawPower(3260);
+
+  const byTopic = Object.fromEntries(publishedTopics.map((p) => [p.topic, p.payload]));
+  assert.equal(byTopic["envoy/123456789/raw/conso_net_energy_flow"], undefined);
+});
+
 test("un message MQTT du capteur general met a jour l'etat et publie immediatement, sans attendre le tick Envoy", async () => {
   const { service, publishedTopics } = createService();
   service.generalMeter.state.lastProdEimWNow = 500;
@@ -319,6 +340,42 @@ test("publishRawLoop republie prod/conso_net/conso_all et met a jour lastProdEim
   assert.equal(service.generalMeter.state.lastProdEimWNow, 1200);
 });
 
+test("publishRawLoop republie conso_net_energy_flow en heartbeat depuis le dernier etat connu", async () => {
+  const { service, publishedTopics } = createService({
+    api: {
+      getRawData: async () => {
+        service.running = false;
+        return { prod_eim_wNow: 1200 };
+      },
+    },
+  });
+  service.generalMeter.state.currentPowerW = -300;
+  service.generalMeter.state.energyFlow = "producing";
+  service.running = true;
+
+  await service.publishRawLoop();
+
+  const byTopic = Object.fromEntries(publishedTopics.map((p) => [p.topic, p.payload]));
+  assert.equal(byTopic["envoy/123456789/raw/conso_net_energy_flow"], "producing");
+});
+
+test("publishRawLoop n'ecrit pas conso_net_energy_flow tant qu'aucun message du capteur n'a ete recu", async () => {
+  const { service, publishedTopics } = createService({
+    api: {
+      getRawData: async () => {
+        service.running = false;
+        return { prod_eim_wNow: 1200 };
+      },
+    },
+  });
+  service.running = true;
+
+  await service.publishRawLoop();
+
+  const byTopic = Object.fromEntries(publishedTopics.map((p) => [p.topic, p.payload]));
+  assert.equal(byTopic["envoy/123456789/raw/conso_net_energy_flow"], undefined);
+});
+
 test("publishRawLoop clampe prod_eim_wNow sous 5W a 0, repercute sur conso_all", async () => {
   const { service, publishedTopics } = createService({
     api: {
@@ -358,10 +415,10 @@ test("deriveFullData integre conso_net/current/grid/eco/conso_all depuis l'etat 
   assert.equal(out["conso_net/current"], 1.38);
 
   assert.equal(out["import/whLifetime"], undefined); // plus de topic/sensor dedié
-  assert.equal(out["grid/whLifetime"], 1_200);
-  assert.equal(out["eco/whLifetime"], 48_800); // prod(50000) - grid(1200)
+  assert.equal(out["to_grid/whLifetime"], 1_200);
+  assert.equal(out["eco/whLifetime"], 48_800); // prod(50000) - to_grid(1200)
   assert.equal(out["conso_all/whLifetime"], 53_800); // import(5000, interne) + eco(48800)
-  assert.equal(out["conso_net/whLifetime"], 3_800); // import(5000, interne) - grid(1200)
+  assert.equal(out["conso_net/whLifetime"], 3_800); // import(5000, interne) - to_grid(1200)
 });
 
 test("deriveFullData applique prodBaselineWh a eco/conso_all sans toucher au prod/whLifetime publié", () => {
@@ -389,7 +446,7 @@ test("deriveFullData ne produit aucun champ derive du capteur général tant qu'
 
   assert.equal(out["conso_net/wNow"], undefined);
   assert.equal(out["import/whLifetime"], undefined);
-  assert.equal(out["grid/whLifetime"], undefined);
+  assert.equal(out["to_grid/whLifetime"], undefined);
   assert.equal(out["eco/whLifetime"], undefined);
   assert.equal(out["conso_all/whLifetime"], undefined);
 });

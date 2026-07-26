@@ -37,7 +37,7 @@ export class EnvoyMqttService {
       "conso_net/whLifetime",
       "prod/whLifetime",
       "eco/whLifetime",
-      "grid/whLifetime",
+      "to_grid/whLifetime",
     ];
 
     this.midnightReferences = {};
@@ -279,7 +279,7 @@ export class EnvoyMqttService {
 
     if (!this.generalMeter.topic) {
       this.log.warn(
-        "capteur général non configuré (sensors.general_meter.topic): conso_net, import, grid et eco ne seront pas produits",
+        "capteur général non configuré (sensors.general_meter.topic): conso_net, import, to_grid/from_grid et eco ne seront pas produits",
       );
     } else {
       if (!Number.isFinite(this.generalMeter.state.import.baselineWh)) {
@@ -289,7 +289,7 @@ export class EnvoyMqttService {
       }
       if (!Number.isFinite(this.generalMeter.state.export.baselineWh)) {
         this.log.warn(
-          "sensors.general_meter.export_baseline_wh manquant: grid/eco/conso_all (whLifetime) ne seront pas produits",
+          "sensors.general_meter.export_baseline_wh manquant: to_grid/eco/conso_all (whLifetime) ne seront pas produits",
         );
       }
     }
@@ -424,6 +424,13 @@ export class EnvoyMqttService {
 
     await this.publish(`${this.topicRaw}/conso_net_eim_wNow`, String(netW), { retain: false, debug: false });
     await this.publish(`${this.topicRaw}/conso_all_eim_wNow`, String(allW), { retain: false, debug: false });
+
+    if (this.generalMeter.state.energyFlow != null) {
+      await this.publish(`${this.topicRaw}/conso_net_energy_flow`, this.generalMeter.state.energyFlow, {
+        retain: false,
+        debug: false,
+      });
+    }
   }
 
   async publishRawLoop() {
@@ -458,6 +465,9 @@ export class EnvoyMqttService {
           conso_net_eim_wNow: Math.round(netW),
           conso_all_eim_wNow: Math.round(this.generalMeter.state.lastProdEimWNow + netW),
         };
+        if (this.generalMeter.state.energyFlow != null) {
+          adjustedRawData.conso_net_energy_flow = this.generalMeter.state.energyFlow;
+        }
 
         for (const [field, value] of Object.entries(adjustedRawData)) {
           const topic = `${this.topicRaw}/${field}`;

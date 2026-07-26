@@ -42,7 +42,7 @@
     "icon": "mdi:flash"
   },
 
-  "grid/whLifetime": {
+  "to_grid/whLifetime": {
     "name": "Lifetime Energy to Grid",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -50,14 +50,14 @@
     "state_class": "total_increasing",
     "icon": "mdi:flash"
   },
-  "grid/kwhLifetime": {
+  "to_grid/kwhLifetime": {
     "name": "Lifetime Energy to Grid (kWh)",
     "platform": "sensor",
     "unit_of_measurement": "kWh",
     "device_class": "energy",
     "state_class": "total_increasing",
     "icon": "mdi:flash",
-    "source_field": "grid/whLifetime",
+    "source_field": "to_grid/whLifetime",
     "value_template": "{{ (value | float(default=0) / 1000) | round(3) }}"
   },
 
@@ -76,7 +76,7 @@
     "value_template": "{{ value }}"
   },
 
-  "grid/wNow": {
+  "to_grid/wNow": {
     "name": "Current Power to Grid",
     "platform": "sensor",
     "unit_of_measurement": "W",
@@ -84,13 +84,21 @@
     "state_class": "measurement",
     "icon": "mdi:flash"
   },
-  "grid/wNow_binary": {
+  "to_grid/wNow_binary": {
     "name": "Current Power to Grid flag",
     "platform": "binary_sensor",
     "icon": "mdi:flash",
     "value_template": "{{ value }}",
     "payload_on": 1,
     "payload_off": 0
+  },
+  "from_grid/wNow": {
+    "name": "Current Power From Grid",
+    "platform": "sensor",
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement",
+    "icon": "mdi:flash"
   },
 
   "eco/wNow": {
@@ -212,7 +220,7 @@
     "state_class": "total_increasing",
     "icon": "mdi:counter"
   },
-  "grid/today": {
+  "to_grid/today": {
     "name": "Today's Energy To grid",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
@@ -256,7 +264,7 @@
     "icon": "mdi:counter",
     "expire_after": 86405
   },
-  "grid/yesterday": {
+  "to_grid/yesterday": {
     "name": "Yesterday Energy To grid",
     "platform": "sensor",
     "unit_of_measurement": "Wh",
