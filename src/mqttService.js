@@ -189,10 +189,23 @@ export class EnvoyMqttService {
       const raw = fs.readFileSync(stateFilePath, "utf-8");
       const persisted = JSON.parse(raw);
 
-      if (persisted?.midnightReferences && typeof persisted.midnightReferences === "object") {
-        for (const [key, value] of Object.entries(persisted.midnightReferences)) {
+      // Format sur disque: midnightReferences.index_00h/conso_yesterday, cles
+      // = nom court du capteur (ex: "conso_all"), plus lisible que le format
+      // interne a plat ("conso_all/whLifetime"/"conso_all/yesterday") utilisé
+      // en memoire (voir dailySensors, calculateDailyValues).
+      const index00h = persisted?.midnightReferences?.index_00h;
+      if (index00h && typeof index00h === "object") {
+        for (const [sensor, value] of Object.entries(index00h)) {
           const numeric = Number(value);
-          if (Number.isFinite(numeric)) this.midnightReferences[key] = numeric;
+          if (Number.isFinite(numeric)) this.midnightReferences[`${sensor}/whLifetime`] = numeric;
+        }
+      }
+
+      const consoYesterday = persisted?.midnightReferences?.conso_yesterday;
+      if (consoYesterday && typeof consoYesterday === "object") {
+        for (const [sensor, value] of Object.entries(consoYesterday)) {
+          const numeric = Number(value);
+          if (Number.isFinite(numeric)) this.midnightReferences[`${sensor}/yesterday`] = numeric;
         }
       }
 
@@ -238,8 +251,21 @@ export class EnvoyMqttService {
 
     try {
       fs.mkdirSync(path.dirname(stateFilePath), { recursive: true });
+
+      // Re-derive index_00h/conso_yesterday (nom court) depuis le format
+      // interne a plat — voir loadMidnightReferencesFromDisk.
+      const index00h = {};
+      const consoYesterday = {};
+      for (const [key, value] of Object.entries(this.midnightReferences)) {
+        if (key.endsWith("/whLifetime")) {
+          index00h[key.slice(0, -"/whLifetime".length)] = value;
+        } else if (key.endsWith("/yesterday")) {
+          consoYesterday[key.slice(0, -"/yesterday".length)] = value;
+        }
+      }
+
       const payload = {
-        midnightReferences: this.midnightReferences,
+        midnightReferences: { index_00h: index00h, conso_yesterday: consoYesterday },
         lastMidnightCheck: this.lastMidnightCheck ?? null,
       };
       fs.writeFileSync(stateFilePath, JSON.stringify(payload), "utf-8");

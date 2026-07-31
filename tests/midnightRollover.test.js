@@ -174,7 +174,7 @@ test("les references minuit et le dernier jour de rollover sont restaurés depui
     fs.writeFileSync(
       stateFilePath,
       JSON.stringify({
-        midnightReferences: { "conso_all/whLifetime": 1000, "prod/whLifetime": 2000 },
+        midnightReferences: { index_00h: { conso_all: 1000, prod: 2000 }, conso_yesterday: {} },
         lastMidnightCheck: "2026-07-19",
       }),
     );
@@ -221,7 +221,8 @@ test("checkAndUpdateMidnightReferences ecrit le fichier d'etat lors d'un rollove
 
     const persisted = JSON.parse(fs.readFileSync(stateFilePath, "utf-8"));
     assert.equal(persisted.lastMidnightCheck, "2026-07-20");
-    assert.equal(persisted.midnightReferences["conso_all/whLifetime"], 1800);
+    assert.equal(persisted.midnightReferences.index_00h.conso_all, 1800);
+    assert.equal(persisted.midnightReferences.conso_yesterday.conso_all, 800); // 1800-1000
   } finally {
     fs.rmSync(stateFilePath, { force: true });
   }

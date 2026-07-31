@@ -332,6 +332,30 @@ Les references `_00h` et `this.lastMidnightCheck` (dernier jour pour lequel le r
 
 Ces valeurs restent egalement publiees en `retain: true` sur MQTT (`topicData/<sensor>_00h`, `topicData/last_midnight_check`) pour rester visibles/debuggables depuis un client MQTT ou Home Assistant, mais ce ne sont plus des topics utilises pour la restauration au demarrage: attendre une redelivrance de messages retained (le service dormait auparavant 10s apres la connexion MQTT pour ca, cf. historique) rendait la restauration fragile et compliquee a corriger manuellement (il fallait republier un message pour corriger une reference). Le fichier local est desormais la seule source de verite au demarrage, et peut se corriger avec un simple editeur de texte.
 
+**Format du fichier**: pour rester lisible/editable a la main, le JSON sur disque regroupe les references par nom court de capteur, sous deux cles `index_00h` (reference `_00h`, un index absolu) et `conso_yesterday` (quantite consommee la veille) — plutot que le format interne a plat (`midnightReferences["conso_all/whLifetime"]`/`midnightReferences["conso_all/yesterday"]`) utilisé en memoire par le reste du code (`dailySensors`, `calculateDailyValues`, topics MQTT). La conversion entre les deux formes se fait uniquement dans `loadMidnightReferencesFromDisk()`/`saveMidnightReferencesToDisk()` — le reste du code ne voit jamais le format disque.
+
+```json
+{
+  "midnightReferences": {
+    "index_00h": {
+      "conso_all": 235346,
+      "conso_net": 151580,
+      "eco": 76366,
+      "prod": 12801174.374,
+      "to_grid": 7400
+    },
+    "conso_yesterday": {
+      "conso_all": 207491,
+      "conso_net": 132930,
+      "prod": 74562,
+      "eco": 69261,
+      "to_grid": 4420
+    }
+  },
+  "lastMidnightCheck": "2026-07-31"
+}
+```
+
 Sans cette persistance, un redemarrage du service tombant pile sur un changement de jour (arret avant minuit, redemarrage apres) ferait perdre le rollover `_yesterday` de ce jour precis: au redemarrage `lastMidnightCheck` serait `undefined`, et le premier appel se contenterait de memoriser le nouveau jour sans jamais calculer `_yesterday` pour le jour manque.
 
 Reference code:
