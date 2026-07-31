@@ -75,6 +75,11 @@ test("aucun rollover tant que la date ne change pas", async () => {
   }
 });
 
+// Ce test ne positionne jamais service.previousFullData: il documente le
+// comportement de repli (voir checkAndUpdateMidnightReferences) quand aucun
+// relevé du tick precedent n'est disponible (ex: redemarrage a cheval sur
+// minuit, RAM neuve) — rolloverSnapshot retombe alors sur currentData, comme
+// avant ce correctif.
 test("le rollover se declenche des que le jour change, meme en pleine apres-midi (gros polling.interval_ms)", async () => {
   const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
   const { service, publishedTopics } = createService({ midnightReferencesStateFile: stateFilePath });
@@ -123,6 +128,40 @@ test("le rollover se declenche des que le jour change, meme en pleine apres-midi
     assert.equal(publishedTopics.length, 11);
     const lastCheckPublish = publishedTopics.find((p) => p.topic === `${service.topicData}/last_midnight_check`);
     assert.equal(lastCheckPublish?.payload, "2026-07-20");
+  } finally {
+    fs.rmSync(stateFilePath, { force: true });
+  }
+});
+
+test("le rollover utilise previousFullData (dernier releve avant minuit) plutot que currentData quand disponible, pour ne pas melanger de la conso d'aujourd'hui dans yesterday", async () => {
+  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
+  const { service, publishedTopics } = createService({ midnightReferencesStateFile: stateFilePath });
+
+  try {
+    service.getNowPartsInTz = () => ({ date: "2026-07-19", hour: 23, minute: 59, second: 0 });
+    service.midnightReferences = { "conso_all/whLifetime": 1000 };
+
+    // Seed initial (pas de rollover).
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1195 });
+    assert.equal(publishedTopics.length, 0);
+
+    // Dernier relevé pris juste avant minuit (fin du tick precedent dans
+    // publishFullLoop, simulé ici directement).
+    service.previousFullData = { "conso_all/whLifetime": 1195 };
+
+    // Detection tardive: le service ne se reveille qu'a 07h00 le lendemain (gros
+    // polling.interval_ms ou redemarrage tardif), avec une donnee live qui
+    // inclut deja 205 de conso du nouveau jour.
+    service.getNowPartsInTz = () => ({ date: "2026-07-20", hour: 7, minute: 0, second: 0 });
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1400 });
+
+    // yesterday doit venir de previousFullData (1195), pas de currentData (1400).
+    assert.equal(service.midnightReferences["conso_all/yesterday"], 195); // 1195-1000
+
+    // Le nouveau _00h doit aussi repartir de previousFullData (1195), pas de
+    // currentData (1400) — sinon les 205 deja ecoulees aujourd'hui seraient
+    // perdues (jamais recomptees dans today).
+    assert.equal(service.midnightReferences["conso_all/whLifetime"], 1195);
   } finally {
     fs.rmSync(stateFilePath, { force: true });
   }

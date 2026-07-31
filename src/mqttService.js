@@ -42,6 +42,10 @@ export class EnvoyMqttService {
 
     this.midnightReferences = {};
     this.lastMidnightCheck = undefined;
+    // Dernier relevé complet du tick precedent (voir publishFullLoop /
+    // checkAndUpdateMidnightReferences) — jamais persisté, RAM neuve a chaque
+    // redemarrage.
+    this.previousFullData = undefined;
     this.midnightReferencesStateFilePath = this.resolveStateFilePath(
       this.config.midnightReferencesStateFile,
       "midnight-references-state.json",
@@ -492,6 +496,10 @@ export class EnvoyMqttService {
         await this.publishDebugPayloads();
         await this.initializeMissingReferences(fullData);
         await this.checkAndUpdateMidnightReferences(fullData);
+        // Servira de rolloverSnapshot au prochain tick (voir
+        // checkAndUpdateMidnightReferences) — meilleure approximation de "minuit
+        // reel" que la donnee live du tick qui detecte le changement de jour.
+        this.previousFullData = fullData;
 
         if (this.config.haAutodiscovery && !this.haDiscoveryPublished) {
           const dailyKeys = Object.keys(this.calculateDailyValues(fullData));
@@ -627,7 +635,20 @@ export class EnvoyMqttService {
     // que soit l'heure exacte ou la valeur de polling.interval_ms: on ne rate
     // jamais le rollover (contrairement a une fenetre d'horloge fixe autour de
     // minuit) — seule sa precision depend de la frequence de polling.
-    const dailyValues = this.calculateDailyValues(currentData);
+    //
+    // Cloture de yesterday et reamorcage de _00h a partir du MEME instant: si on
+    // utilisait currentData (live au moment de la detection, potentiellement
+    // arrive plusieurs heures apres minuit reel avec un gros polling.interval_ms
+    // ou un redemarrage tardif), la conso ecoulee entre minuit et cet instant
+    // serait comptee dans yesterday puis silencieusement perdue (jamais recomptee
+    // dans today, puisque le nouveau _00h repartirait de cette meme valeur
+    // gonflee). previousFullData (dernier relevé du tick precedent, mis a jour
+    // dans publishFullLoop) est une bien meilleure approximation de "minuit reel"
+    // — a defaut (ex: redemarrage a cheval sur minuit, RAM neuve), on retombe sur
+    // currentData comme avant.
+    const rolloverSnapshot = this.previousFullData ?? currentData;
+
+    const dailyValues = this.calculateDailyValues(rolloverSnapshot);
     for (const [sensorToday, value] of Object.entries(dailyValues)) {
       const yesterdayField = sensorToday.replace("today", "yesterday");
       this.midnightReferences[yesterdayField] = Number(value);
@@ -636,8 +657,8 @@ export class EnvoyMqttService {
     }
 
     for (const sensor of this.dailySensors) {
-      if (currentData[sensor] == null) continue;
-      const value = Number(currentData[sensor]);
+      if (rolloverSnapshot[sensor] == null) continue;
+      const value = Number(rolloverSnapshot[sensor]);
       if (!Number.isFinite(value)) continue;
       this.midnightReferences[sensor] = value;
       const topic = `${this.topicData}/${sensor}_00h`;

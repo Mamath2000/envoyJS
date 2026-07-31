@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help run docker-build docker-run release release-patch release-minor release-major release-docker release-docker-push
+.PHONY: help run docker-build docker-run simulate-midnight-rollover release release-patch release-minor release-major release-docker release-docker-push
 
 help: ## Affiche l'aide
 	@printf "\nTargets disponibles:\n\n"
@@ -10,6 +10,9 @@ help: ## Affiche l'aide
 
 run: ## Lance le service (nécessite config.yaml)
 	node src/index.js
+
+simulate-midnight-rollover: ## Force le rollover minuit au prochain tick (test, redémarrer le service après)
+	./scripts/simulate-midnight-rollover.sh
 
 docker-build: ## Construit l'image Docker localement
 	docker build -t envoyjs:latest .

@@ -315,6 +315,17 @@ Et publie:
 
 Le tout premier appel apres le demarrage du service memorise simplement le jour courant sans declencher de rollover (sinon un demarrage en milieu de journee serait pris a tort pour un changement de jour).
 
+#### Snapshot utilise pour cloturer yesterday et reamorcer _00h
+
+Detecter le changement de jour ne suffit pas: encore faut-il cloturer `yesterday` et reamorcer `_00h` a partir d'une valeur representative de minuit reel, pas de la donnee live au moment (potentiellement tardif) ou le tick detecte le changement. Utiliser directement `currentData` pour les deux ferait perdre silencieusement la conso ecoulee entre minuit et cet instant: elle serait comptee dans `yesterday` (surcompte) puis jamais recomptee dans `today`, puisque le nouveau `_00h` repartirait de cette meme valeur deja gonflee.
+
+`checkAndUpdateMidnightReferences()` utilise donc `this.previousFullData ?? currentData` (`rolloverSnapshot`) pour les deux etapes du rollover — le meme instant sert a cloturer `yesterday` et a reamorcer `_00h`, rien n'est perdu ni double-compte:
+
+- `this.previousFullData` est le dernier relevé complet du tick precedent, mis a jour a chaque iteration de `publishFullLoop()` (juste apres l'appel a `checkAndUpdateMidnightReferences`) — en usage normal (service qui tourne en continu), c'est une bien meilleure approximation de "minuit reel" que la donnee du tick qui detecte effectivement le changement, avec une precision bornee par `polling.interval_ms`.
+- A defaut (RAM neuve: redemarrage du service a cheval sur minuit, ou tout premier tick apres un demarrage qui detecte immediatement un changement de jour), repli sur `currentData` — comportement historique, degrade mais fonctionnel, borne par la duree de la coupure plutot que par `polling.interval_ms`. Corriger ce cas residuel demanderait de persister en continu les relevés bruts sur disque (jugé hors scope pour ce projet).
+
+`this.previousFullData` n'est jamais persisté sur disque (RAM uniquement) — il n'a pas besoin de survivre a un redemarrage, le repli sur `currentData` couvrant deja ce cas.
+
 #### Persistance de `midnightReferences` et `lastMidnightCheck`
 
 Les references `_00h` et `this.lastMidnightCheck` (dernier jour pour lequel le rollover a ete effectue) sont persistees dans un fichier JSON local (`state.midnight_references_file`, defaut `data/midnight-references-state.json`), ecrit directement (sans etape intermediaire) a chaque changement via `saveMidnightReferencesToDisk()`, et relu de facon synchrone au demarrage via `loadMidnightReferencesFromDisk()` — avant meme la premiere lecture Envoy.
@@ -325,10 +336,21 @@ Sans cette persistance, un redemarrage du service tombant pile sur un changement
 
 Reference code:
 
-- src/mqttService.js:549 (initializeMissingReferences)
-- src/mqttService.js:562 (checkAndUpdateMidnightReferences — persistance + publication retained)
-- src/mqttService.js:845 (calculateDailyValues)
-- src/mqttService.js (loadMidnightReferencesFromDisk / saveMidnightReferencesToDisk)
+- src/mqttService.js:603 (initializeMissingReferences)
+- src/mqttService.js:619 (checkAndUpdateMidnightReferences — persistance + publication retained)
+- src/mqttService.js:850 (calculateDailyValues)
+- src/mqttService.js:184 / :235 (loadMidnightReferencesFromDisk / saveMidnightReferencesToDisk)
+
+#### Tester le rollover a toute heure (environnement de test)
+
+`lastMidnightCheck` n'etant relu depuis le disque qu'au demarrage du service, on peut forcer un rollover au prochain tick sans attendre minuit reel, quelle que soit l'heure courante:
+
+1. Arreter le service (ou editer avant le tout premier demarrage).
+2. `make simulate-midnight-rollover` (ou directement `scripts/simulate-midnight-rollover.sh [chemin_fichier_etat]`) — recule `lastMidnightCheck` d'un jour dans le fichier d'etat (`data/midnight-references-state.json` par defaut), sans toucher a `midnightReferences`.
+3. Redemarrer le service. Au prochain tick de `publishFullLoop()` (`polling.interval_ms`), `checkAndUpdateMidnightReferences()` detecte l'ecart de date et declenche un vrai rollover avec les donnees live du moment.
+4. Verifier sur MQTT (`data/*_yesterday`, `data/*_00h`, `data/last_midnight_check`, tous retained) que les valeurs se mettent a jour.
+
+**Limite** : `this.previousFullData` etant en RAM (jamais persisté), un service qui vient de redemarrer repart toujours sans lui — cette procedure exerce donc le chemin de repli (`currentData`) decrit ci-dessus, pas le chemin precis (`previousFullData`). Le chemin precis est couvert par `tests/midnightRollover.test.js` (test avec `service.previousFullData` positionné directement), pas par ce test manuel.
 
 ## 6. Integration du tableau electrique deporte
 
