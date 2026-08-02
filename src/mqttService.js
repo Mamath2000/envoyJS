@@ -42,10 +42,6 @@ export class EnvoyMqttService {
 
     this.midnightReferences = {};
     this.lastMidnightCheck = undefined;
-    // Dernier relevé complet du tick precedent (voir publishFullLoop /
-    // checkAndUpdateMidnightReferences) — jamais persisté, RAM neuve a chaque
-    // redemarrage.
-    this.previousFullData = undefined;
     this.midnightReferencesStateFilePath = this.resolveStateFilePath(
       this.config.midnightReferencesStateFile,
       "midnight-references-state.json",
@@ -189,10 +185,12 @@ export class EnvoyMqttService {
       const raw = fs.readFileSync(stateFilePath, "utf-8");
       const persisted = JSON.parse(raw);
 
-      // Format sur disque: midnightReferences.index_00h/conso_yesterday, cles
+      // Format sur disque: midnightReferences.index_00h/index_00h_veille, cles
       // = nom court du capteur (ex: "conso_all"), plus lisible que le format
-      // interne a plat ("conso_all/whLifetime"/"conso_all/yesterday") utilisé
-      // en memoire (voir dailySensors, calculateDailyValues).
+      // interne a plat ("conso_all/whLifetime"/"conso_all/whLifetime_veille")
+      // utilisé en memoire (voir dailySensors, calculateDailyValues). Les deux
+      // buckets sont symetriques: yesterday n'est jamais persisté tel quel,
+      // toujours dérivé de _00h - _00h_veille (voir republishMidnightReferencesToMqtt).
       const index00h = persisted?.midnightReferences?.index_00h;
       if (index00h && typeof index00h === "object") {
         for (const [sensor, value] of Object.entries(index00h)) {
@@ -201,11 +199,11 @@ export class EnvoyMqttService {
         }
       }
 
-      const consoYesterday = persisted?.midnightReferences?.conso_yesterday;
-      if (consoYesterday && typeof consoYesterday === "object") {
-        for (const [sensor, value] of Object.entries(consoYesterday)) {
+      const index00hVeille = persisted?.midnightReferences?.index_00h_veille;
+      if (index00hVeille && typeof index00hVeille === "object") {
+        for (const [sensor, value] of Object.entries(index00hVeille)) {
           const numeric = Number(value);
-          if (Number.isFinite(numeric)) this.midnightReferences[`${sensor}/yesterday`] = numeric;
+          if (Number.isFinite(numeric)) this.midnightReferences[`${sensor}/whLifetime_veille`] = numeric;
         }
       }
 
@@ -233,9 +231,12 @@ export class EnvoyMqttService {
         await this.publish(`${this.topicData}/${sensor}_00h`, String(refValue), { retain: true });
       }
 
-      const yesterdayField = sensor.replace("whLifetime", "yesterday");
-      const yesterdayValue = this.midnightReferences[yesterdayField];
-      if (yesterdayValue != null) {
+      // yesterday derive de _00h/_00h_veille (jamais son propre etat), meme
+      // calcul qu'au rollover — voir checkAndUpdateMidnightReferences.
+      const veilleValue = this.midnightReferences[`${sensor}_veille`];
+      if (refValue != null && veilleValue != null) {
+        const yesterdayField = sensor.replace("whLifetime", "yesterday");
+        const yesterdayValue = Math.max(0, Math.round(refValue - veilleValue));
         await this.publish(`${this.topicData}/${yesterdayField}`, String(yesterdayValue), { retain: true });
       }
     }
@@ -252,20 +253,21 @@ export class EnvoyMqttService {
     try {
       fs.mkdirSync(path.dirname(stateFilePath), { recursive: true });
 
-      // Re-derive index_00h/conso_yesterday (nom court) depuis le format
-      // interne a plat — voir loadMidnightReferencesFromDisk.
+      // Re-derive index_00h/index_00h_veille (nom court) depuis le format
+      // interne a plat — voir loadMidnightReferencesFromDisk. yesterday n'est
+      // jamais persisté (toujours dérivé des deux index).
       const index00h = {};
-      const consoYesterday = {};
+      const index00hVeille = {};
       for (const [key, value] of Object.entries(this.midnightReferences)) {
-        if (key.endsWith("/whLifetime")) {
+        if (key.endsWith("/whLifetime_veille")) {
+          index00hVeille[key.slice(0, -"/whLifetime_veille".length)] = value;
+        } else if (key.endsWith("/whLifetime")) {
           index00h[key.slice(0, -"/whLifetime".length)] = value;
-        } else if (key.endsWith("/yesterday")) {
-          consoYesterday[key.slice(0, -"/yesterday".length)] = value;
         }
       }
 
       const payload = {
-        midnightReferences: { index_00h: index00h, conso_yesterday: consoYesterday },
+        midnightReferences: { index_00h: index00h, index_00h_veille: index00hVeille },
         lastMidnightCheck: this.lastMidnightCheck ?? null,
       };
       fs.writeFileSync(stateFilePath, JSON.stringify(payload), "utf-8");
@@ -522,10 +524,6 @@ export class EnvoyMqttService {
         await this.publishDebugPayloads();
         await this.initializeMissingReferences(fullData);
         await this.checkAndUpdateMidnightReferences(fullData);
-        // Servira de rolloverSnapshot au prochain tick (voir
-        // checkAndUpdateMidnightReferences) — meilleure approximation de "minuit
-        // reel" que la donnee live du tick qui detecte le changement de jour.
-        this.previousFullData = fullData;
 
         if (this.config.haAutodiscovery && !this.haDiscoveryPublished) {
           const dailyKeys = Object.keys(this.calculateDailyValues(fullData));
@@ -662,33 +660,46 @@ export class EnvoyMqttService {
     // jamais le rollover (contrairement a une fenetre d'horloge fixe autour de
     // minuit) — seule sa precision depend de la frequence de polling.
     //
-    // Cloture de yesterday et reamorcage de _00h a partir du MEME instant: si on
-    // utilisait currentData (live au moment de la detection, potentiellement
-    // arrive plusieurs heures apres minuit reel avec un gros polling.interval_ms
-    // ou un redemarrage tardif), la conso ecoulee entre minuit et cet instant
-    // serait comptee dans yesterday puis silencieusement perdue (jamais recomptee
-    // dans today, puisque le nouveau _00h repartirait de cette meme valeur
-    // gonflee). previousFullData (dernier relevé du tick precedent, mis a jour
-    // dans publishFullLoop) est une bien meilleure approximation de "minuit reel"
-    // — a defaut (ex: redemarrage a cheval sur minuit, RAM neuve), on retombe sur
-    // currentData comme avant.
-    const rolloverSnapshot = this.previousFullData ?? currentData;
-
-    const dailyValues = this.calculateDailyValues(rolloverSnapshot);
-    for (const [sensorToday, value] of Object.entries(dailyValues)) {
-      const yesterdayField = sensorToday.replace("today", "yesterday");
-      this.midnightReferences[yesterdayField] = Number(value);
-      const topic = `${this.topicData}/${yesterdayField}`;
-      await this.publish(topic, String(value), { retain: true });
-    }
-
+    // _00h et _00h_veille sont deux index symetriques, traites exactement de
+    // la meme facon: chacun capture en direct sur currentData au moment de son
+    // propre rollover, jamais mis en cache entre deux ticks. yesterday est
+    // purement DERIVE de ces deux index (jamais son propre etat persistant) —
+    // memes principe que today (toujours recalcule depuis currentData - _00h,
+    // jamais un probleme depuis le debut). Avant ce design, yesterday etait
+    // calcule contre un instantane RAM ("previousFullData") mis a jour
+    // uniquement quand le polling Envoy reussissait: en cas d'echecs repetes
+    // prolonges, ce cache pouvait geler silencieusement pres de l'ancien _00h,
+    // produisant un delta minuscule au rollover suivant (incident constate en
+    // prod le 2026-08-02: yesterday tombé a 2 Wh au lieu d'environ 15837 Wh,
+    // sans aucun redemarrage). En derivant toujours yesterday de deux index
+    // capturés en direct, ce risque de gel silencieux disparait entierement.
     for (const sensor of this.dailySensors) {
-      if (rolloverSnapshot[sensor] == null) continue;
-      const value = Number(rolloverSnapshot[sensor]);
+      if (currentData[sensor] == null) continue;
+      const value = Number(currentData[sensor]);
       if (!Number.isFinite(value)) continue;
+
+      const veilleKey = `${sensor}_veille`;
+      const previousTodayRef = this.midnightReferences[sensor];
+      if (previousTodayRef != null) {
+        this.midnightReferences[veilleKey] = previousTodayRef;
+      }
+
       this.midnightReferences[sensor] = value;
       const topic = `${this.topicData}/${sensor}_00h`;
       await this.publish(topic, String(value), { retain: true });
+    }
+
+    // Uniquement pour deriver les noms de champs (dailyKeys) utilises par
+    // l'autodiscovery HA plus bas — plus utilisé pour calculer yesterday.
+    const dailyValues = this.calculateDailyValues(currentData);
+
+    for (const sensor of this.dailySensors) {
+      const todayRef = this.midnightReferences[sensor];
+      const veilleRef = this.midnightReferences[`${sensor}_veille`];
+      if (todayRef == null || veilleRef == null) continue;
+      const yesterdayValue = Math.max(0, Math.round(todayRef - veilleRef));
+      const yesterdayField = sensor.replace("whLifetime", "yesterday");
+      await this.publish(`${this.topicData}/${yesterdayField}`, String(yesterdayValue), { retain: true });
     }
 
     this.lastMidnightCheck = currentDate;

@@ -315,16 +315,16 @@ Et publie:
 
 Le tout premier appel apres le demarrage du service memorise simplement le jour courant sans declencher de rollover (sinon un demarrage en milieu de journee serait pris a tort pour un changement de jour).
 
-#### Snapshot utilise pour cloturer yesterday et reamorcer _00h
+#### _00h et _00h_veille: deux index symetriques, yesterday toujours derive
 
-Detecter le changement de jour ne suffit pas: encore faut-il cloturer `yesterday` et reamorcer `_00h` a partir d'une valeur representative de minuit reel, pas de la donnee live au moment (potentiellement tardif) ou le tick detecte le changement. Utiliser directement `currentData` pour les deux ferait perdre silencieusement la conso ecoulee entre minuit et cet instant: elle serait comptee dans `yesterday` (surcompte) puis jamais recomptee dans `today`, puisque le nouveau `_00h` repartirait de cette meme valeur deja gonflee.
+`checkAndUpdateMidnightReferences()` maintient **deux index de minuit** par capteur, traites de facon rigoureusement identique:
 
-`checkAndUpdateMidnightReferences()` utilise donc `this.previousFullData ?? currentData` (`rolloverSnapshot`) pour les deux etapes du rollover — le meme instant sert a cloturer `yesterday` et a reamorcer `_00h`, rien n'est perdu ni double-compte:
+- `_00h` (aujourd'hui): l'index absolu capturé en direct sur `currentData`, au moment du rollover.
+- `_00h_veille` (hier): au moment du rollover, l'ancien `_00h` (celui qui representait le debut du jour qui vient de se terminer) est recopié tel quel dans `_00h_veille`, **avant** d'etre ecrasé par la nouvelle valeur.
 
-- `this.previousFullData` est le dernier relevé complet du tick precedent, mis a jour a chaque iteration de `publishFullLoop()` (juste apres l'appel a `checkAndUpdateMidnightReferences`) — en usage normal (service qui tourne en continu), c'est une bien meilleure approximation de "minuit reel" que la donnee du tick qui detecte effectivement le changement, avec une precision bornee par `polling.interval_ms`.
-- A defaut (RAM neuve: redemarrage du service a cheval sur minuit, ou tout premier tick apres un demarrage qui detecte immediatement un changement de jour), repli sur `currentData` — comportement historique, degrade mais fonctionnel, borne par la duree de la coupure plutot que par `polling.interval_ms`. Corriger ce cas residuel demanderait de persister en continu les relevés bruts sur disque (jugé hors scope pour ce projet).
+`yesterday` n'est **jamais** son propre etat: il est systematiquement **dérivé** — `yesterday = max(0, round(_00h - _00h_veille))` — partout ou il est publié (au rollover, et au redemarrage via `republishMidnightReferencesToMqtt()`). Exactement le meme principe que `today` (`currentData - _00h`, toujours recalculé, jamais mis en cache) — appliqué ici a la paire `_00h`/`_00h_veille`.
 
-`this.previousFullData` n'est jamais persisté sur disque (RAM uniquement) — il n'a pas besoin de survivre a un redemarrage, le repli sur `currentData` couvrant deja ce cas.
+**Pourquoi pas un instantané intermediaire ("previousFullData")**: une version anterieure de ce mecanisme calculait `yesterday` contre un instantané RAM du tick precedent, mis a jour uniquement quand `getCorrectedFullData()` reussissait. En cas d'echecs de polling Envoy repetes et prolonges (deconnexion, souci d'auth — plausible pour un appareil HTTP local), cet instantané pouvait geler silencieusement pres de l'ancien `_00h` pendant des heures, sans autre signal qu'un `warn` répété par tick. Si ce gel avait commencé juste apres le rollover de la veille, le rollover suivant calculait alors un delta minuscule contre une valeur presque identique a l'ancien `_00h` — incident constaté en prod le 2026-08-02 (`prod/yesterday` tombé a 2 Wh au lieu d'environ 15837 Wh), **sans aucun redemarrage du service** (confirmé via `docker compose ps`, uptime continu). `_00h` n'a jamais souffert de ce risque, precisement parce qu'il n'a jamais dependu d'un cache intermediaire — `_00h_veille` reprend ce meme principe pour `yesterday`, eliminant la classe de bug entierement plutot que de la contourner.
 
 #### Persistance de `midnightReferences` et `lastMidnightCheck`
 
@@ -332,27 +332,27 @@ Les references `_00h` et `this.lastMidnightCheck` (dernier jour pour lequel le r
 
 Ces valeurs restent egalement publiees en `retain: true` sur MQTT (`topicData/<sensor>_00h`, `topicData/last_midnight_check`) pour rester visibles/debuggables depuis un client MQTT ou Home Assistant, mais ce ne sont plus des topics utilises pour la restauration au demarrage: attendre une redelivrance de messages retained (le service dormait auparavant 10s apres la connexion MQTT pour ca, cf. historique) rendait la restauration fragile et compliquee a corriger manuellement (il fallait republier un message pour corriger une reference). Le fichier local est desormais la seule source de verite au demarrage, et peut se corriger avec un simple editeur de texte.
 
-**Format du fichier**: pour rester lisible/editable a la main, le JSON sur disque regroupe les references par nom court de capteur, sous deux cles `index_00h` (reference `_00h`, un index absolu) et `conso_yesterday` (quantite consommee la veille) — plutot que le format interne a plat (`midnightReferences["conso_all/whLifetime"]`/`midnightReferences["conso_all/yesterday"]`) utilisé en memoire par le reste du code (`dailySensors`, `calculateDailyValues`, topics MQTT). La conversion entre les deux formes se fait uniquement dans `loadMidnightReferencesFromDisk()`/`saveMidnightReferencesToDisk()` — le reste du code ne voit jamais le format disque.
+**Format du fichier**: pour rester lisible/editable a la main, le JSON sur disque regroupe les references par nom court de capteur, sous deux cles symetriques `index_00h` et `index_00h_veille` — plutot que le format interne a plat (`midnightReferences["conso_all/whLifetime"]`/`midnightReferences["conso_all/whLifetime_veille"]`) utilisé en memoire par le reste du code (`dailySensors`, `calculateDailyValues`, topics MQTT). `yesterday` n'apparait jamais dans ce fichier: il est toujours dérivé des deux index au moment de la publication. La conversion entre les deux formes se fait uniquement dans `loadMidnightReferencesFromDisk()`/`saveMidnightReferencesToDisk()` — le reste du code ne voit jamais le format disque.
 
 ```json
 {
   "midnightReferences": {
     "index_00h": {
+      "conso_all": 301082,
+      "conso_net": 195630,
+      "eco": 98002,
+      "prod": 12822860.485,
+      "to_grid": 7450
+    },
+    "index_00h_veille": {
       "conso_all": 235346,
       "conso_net": 151580,
-      "eco": 76366,
       "prod": 12801174.374,
+      "eco": 76366,
       "to_grid": 7400
-    },
-    "conso_yesterday": {
-      "conso_all": 207491,
-      "conso_net": 132930,
-      "prod": 74562,
-      "eco": 69261,
-      "to_grid": 4420
     }
   },
-  "lastMidnightCheck": "2026-07-31"
+  "lastMidnightCheck": "2026-08-02"
 }
 ```
 
@@ -360,21 +360,23 @@ Sans cette persistance, un redemarrage du service tombant pile sur un changement
 
 Reference code:
 
-- src/mqttService.js:603 (initializeMissingReferences)
-- src/mqttService.js:619 (checkAndUpdateMidnightReferences — persistance + publication retained)
-- src/mqttService.js:850 (calculateDailyValues)
-- src/mqttService.js:184 / :235 (loadMidnightReferencesFromDisk / saveMidnightReferencesToDisk)
+- src/mqttService.js:627 (initializeMissingReferences)
+- src/mqttService.js:643 (checkAndUpdateMidnightReferences — persistance + publication retained)
+- src/mqttService.js:887 (calculateDailyValues)
+- src/mqttService.js:180 / :249 (loadMidnightReferencesFromDisk / saveMidnightReferencesToDisk)
 
 #### Tester le rollover a toute heure (environnement de test)
 
 `lastMidnightCheck` n'etant relu depuis le disque qu'au demarrage du service, on peut forcer un rollover au prochain tick sans attendre minuit reel, quelle que soit l'heure courante:
 
 1. Arreter le service (ou editer avant le tout premier demarrage).
-2. `make simulate-midnight-rollover` (ou directement `scripts/simulate-midnight-rollover.sh [chemin_fichier_etat]`) — recule `lastMidnightCheck` d'un jour dans le fichier d'etat (`data/midnight-references-state.json` par defaut), sans toucher a `midnightReferences`.
+2. `make simulate-midnight-rollover` (ou directement `scripts/simulate-midnight-rollover.sh [--force] [chemin_fichier_etat]`) — recule `lastMidnightCheck` d'un jour dans le fichier d'etat (`data/midnight-references-state.json` par defaut), sans toucher a `midnightReferences`.
 3. Redemarrer le service. Au prochain tick de `publishFullLoop()` (`polling.interval_ms`), `checkAndUpdateMidnightReferences()` detecte l'ecart de date et declenche un vrai rollover avec les donnees live du moment.
-4. Verifier sur MQTT (`data/*_yesterday`, `data/*_00h`, `data/last_midnight_check`, tous retained) que les valeurs se mettent a jour.
+4. Verifier sur MQTT (`data/*_00h`, `data/*_yesterday`, `data/last_midnight_check`, tous retained) que les valeurs se mettent a jour — `yesterday` est recalculé et publié, comme lors d'un vrai rollover.
 
-**Limite** : `this.previousFullData` etant en RAM (jamais persisté), un service qui vient de redemarrer repart toujours sans lui — cette procedure exerce donc le chemin de repli (`currentData`) decrit ci-dessus, pas le chemin precis (`previousFullData`). Le chemin precis est couvert par `tests/midnightRollover.test.js` (test avec `service.previousFullData` positionné directement), pas par ce test manuel.
+**Le script refuse de s'executer si `lastMidnightCheck` est deja la date du jour** (le vrai rollover a deja eu lieu aujourd'hui): forcer un second rollover dans ce cas recopierait le `_00h` tout juste posé dans `_00h_veille`, quasi identique, et produirait un `yesterday` proche de zero — ecrasant la vraie valeur `_00h_veille` qui vient d'etre calculee. `--force` passe outre, en connaissance de cause — jamais sur le fichier d'etat de prod juste apres un vrai rollover (voir l'incident du 2026-08-02 ci-dessus).
+
+Cette procedure manuelle exerce exactement le meme unique chemin de calcul qu'un rollover reel (plus de distinction "chemin de repli"/"chemin precis": `_00h` et `_00h_veille` sont toujours capturés en direct sur `currentData`, redemarrage ou pas) — elle est donc pleinement representative.
 
 ## 6. Integration du tableau electrique deporte
 
