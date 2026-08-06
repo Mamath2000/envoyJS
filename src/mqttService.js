@@ -155,15 +155,16 @@ export class EnvoyMqttService {
     const minute = Number(get("minute") || 0);
     const second = Number(get("second") || 0);
 
-    let date = year && month && day ? `${year}-${month}-${day}` : new Date().toISOString().slice(0, 10);
+    const date = year && month && day ? `${year}-${month}-${day}` : new Date().toISOString().slice(0, 10);
 
     // Fallback robuste: si l'heure arrive à 24 (observé sur certains runtimes à minuit),
-    // on la ramène à 0 et on avance la date d'un jour.
-    if (hour === 24 && year && month && day) {
+    // on la ramène à 0. `year`/`month`/`day` sont déjà ceux du nouveau jour dans ce cas
+    // (confirmé empiriquement sur ICU 76.1/Node 20 et reproduit en prod le 2026-08-04/05:
+    // avancer `date` d'un jour supplémentaire ici sautait carrément le jour suivant,
+    // provoquant un rollover fantôme puis un second rollover correctif une heure plus
+    // tard qui corrompait `_00h_veille`).
+    if (hour === 24) {
       hour = 0;
-      const base = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
-      const next = new Date(base.getTime() + 24 * 60 * 60 * 1000);
-      date = next.toISOString().slice(0, 10);
     }
 
     return { date, hour, minute, second };
