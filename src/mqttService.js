@@ -47,6 +47,15 @@ export class EnvoyMqttService {
 
     this.midnightReferences = {};
     this.lastMidnightCheck = undefined;
+    // Capteurs journaliers dont le rollover minuit du jour courant n'a pas
+    // encore ete valide (voir checkAndUpdateMidnightReferences /
+    // assessMidnightSnapshotValidity) — permet de retenter au prochain cycle
+    // sans attendre le changement de jour suivant, quand la source amont
+    // etait invalide/indisponible exactement au moment du snapshot.
+    this.pendingMidnightSensors = new Set();
+    // Dernieres valeurs "today" jugees plausibles, republiees telles quelles
+    // quand calculateDailyValues detecte un saut aberrant (voir plus bas).
+    this.lastGoodDailyValues = {};
     this.midnightReferencesStateFilePath = this.resolveStateFilePath(
       this.config.midnightReferencesStateFile,
       "midnight-references-state.json",
@@ -670,6 +679,35 @@ export class EnvoyMqttService {
     if (changed) this.saveMidnightReferencesToDisk();
   }
 
+  // Verifie qu'une valeur lue au moment du snapshot minuit est plausible
+  // avant de l'utiliser pour geler whLifetime_00h. Un whLifetime est un
+  // compteur cumulatif materiel: il ne peut physiquement que croitre (ou
+  // rester egal) d'un jour a l'autre. Toute lecture qui viole cet invariant
+  // est presque toujours le signe d'une source amont invalide/indisponible
+  // exactement au moment du snapshot (payload MQTT null/glitch d'un device
+  // tiers, voir incident 2026-09-21/22: to_grid/conso_net figes a 0 pendant
+  // ~26h, puis gelés comme _00h au rollover suivant), jamais un vrai
+  // comportement du compteur — on la rejette plutot que de geler une
+  // reference fausse.
+  assessMidnightSnapshotValidity(value, previousTodayRef) {
+    if (!Number.isFinite(value)) return { valid: false, reason: "valeur non numerique" };
+
+    if (previousTodayRef != null) {
+      // previousTodayRef === 0 est laissé passer: un compteur tout juste
+      // rebaseliné (jamais encore vu de valeur non nulle) peut legitimement
+      // rester a 0 un moment — seule une VRAIE baisse depuis une reference
+      // deja non nulle est un signal fiable de glitch.
+      if (previousTodayRef > 0 && value === 0) {
+        return { valid: false, reason: "valeur retombee a 0 alors qu'une reference _00h non nulle existe" };
+      }
+      if (value < previousTodayRef) {
+        return { valid: false, reason: "valeur inferieure a l'ancienne reference _00h (compteur qui recule)" };
+      }
+    }
+
+    return { valid: true };
+  }
+
   async checkAndUpdateMidnightReferences(currentData) {
     const now = this.getNowPartsInTz();
     const currentDate = now.date;
@@ -679,17 +717,27 @@ export class EnvoyMqttService {
       // courant sans declencher de rollover (sinon un demarrage a 14h serait pris
       // pour un changement de jour et ecraserait les references _00h a tort).
       this.lastMidnightCheck = currentDate;
+      this.pendingMidnightSensors = new Set();
       this.saveMidnightReferencesToDisk();
       return;
     }
 
-    if (this.lastMidnightCheck === currentDate) return;
+    if (this.lastMidnightCheck !== currentDate) {
+      // Le jour a change depuis la derniere iteration de la boucle complete,
+      // quelle que soit l'heure exacte ou la valeur de polling.interval_ms: on
+      // ne rate jamais le rollover (contrairement a une fenetre d'horloge fixe
+      // autour de minuit) — seule sa precision depend de la frequence de
+      // polling. On ouvre une fenetre de rollover pour tous les capteurs
+      // journaliers; ceux dont la lecture est jugee invalide (voir
+      // assessMidnightSnapshotValidity) restent "en attente" et sont
+      // retentes aux cycles suivants (this.pendingMidnightSensors), sans
+      // attendre le prochain changement de jour.
+      this.pendingMidnightSensors = new Set(this.dailySensors);
+      this.lastMidnightCheck = currentDate;
+    }
 
-    // Le jour a change depuis la derniere iteration de la boucle complete, quelle
-    // que soit l'heure exacte ou la valeur de polling.interval_ms: on ne rate
-    // jamais le rollover (contrairement a une fenetre d'horloge fixe autour de
-    // minuit) — seule sa precision depend de la frequence de polling.
-    //
+    if (this.pendingMidnightSensors.size === 0) return;
+
     // _00h et _00h_veille sont deux index symetriques, traites exactement de
     // la meme facon: chacun capture en direct sur currentData au moment de son
     // propre rollover, jamais mis en cache entre deux ticks. yesterday est
@@ -703,13 +751,25 @@ export class EnvoyMqttService {
     // prod le 2026-08-02: yesterday tombé a 2 Wh au lieu d'environ 15837 Wh,
     // sans aucun redemarrage). En derivant toujours yesterday de deux index
     // capturés en direct, ce risque de gel silencieux disparait entierement.
-    for (const sensor of this.dailySensors) {
+    const rolledSensors = [];
+    for (const sensor of this.pendingMidnightSensors) {
       if (currentData[sensor] == null) continue;
       const value = Number(currentData[sensor]);
-      if (!Number.isFinite(value)) continue;
+      const previousTodayRef = this.midnightReferences[sensor];
+
+      const validity = this.assessMidnightSnapshotValidity(value, previousTodayRef);
+      if (!validity.valid) {
+        this.log.warn("snapshot minuit ignoré: donnée amont jugée invalide, ancien _00h conservé", {
+          sensor,
+          value,
+          previousTodayRef,
+          reason: validity.reason,
+          date: currentDate,
+        });
+        continue;
+      }
 
       const veilleKey = `${sensor}_veille`;
-      const previousTodayRef = this.midnightReferences[sensor];
       if (previousTodayRef != null) {
         this.midnightReferences[veilleKey] = previousTodayRef;
       }
@@ -717,13 +777,21 @@ export class EnvoyMqttService {
       this.midnightReferences[sensor] = value;
       const topic = `${this.topicData}/${sensor}_00h`;
       await this.publish(topic, String(value), { retain: true });
+      rolledSensors.push(sensor);
     }
+
+    for (const sensor of rolledSensors) this.pendingMidnightSensors.delete(sensor);
+
+    // Rien de nouveau ce cycle (tous les capteurs restants sont invalides ou
+    // absents de currentData): on retentera au prochain cycle, sans rien
+    // publier/persister de plus.
+    if (rolledSensors.length === 0) return;
 
     // Uniquement pour deriver les noms de champs (dailyKeys) utilises par
     // l'autodiscovery HA plus bas — plus utilisé pour calculer yesterday.
     const dailyValues = this.calculateDailyValues(currentData);
 
-    for (const sensor of this.dailySensors) {
+    for (const sensor of rolledSensors) {
       const todayRef = this.midnightReferences[sensor];
       const veilleRef = this.midnightReferences[`${sensor}_veille`];
       if (todayRef == null || veilleRef == null) continue;
@@ -732,7 +800,6 @@ export class EnvoyMqttService {
       await this.publish(`${this.topicData}/${yesterdayField}`, String(yesterdayValue), { retain: true });
     }
 
-    this.lastMidnightCheck = currentDate;
     this.saveMidnightReferencesToDisk();
     // Publié en retained (comme les topics _00h), pour affichage/debug uniquement:
     // la restauration au demarrage se fait desormais depuis le fichier d'etat
@@ -786,6 +853,15 @@ export class EnvoyMqttService {
   }
 
   normalizeGeneralMeterIndexWh(rawIndex) {
+    // Piège JS: Number(null) === 0, une valeur *finite* — un champ JSON
+    // explicitement `null` (device MQTT tiers indisponible/payload
+    // transitoire, voir incident 2026-09-21/22 sur
+    // energy_sensor_0xa4c138e8a839ce00) ne doit jamais être lu comme "0 Wh",
+    // sous peine d'être ensuite traité comme une vraie lecture par
+    // applyGeneralMeterReading puis figé comme whLifetime_00h au rollover
+    // minuit suivant.
+    if (rawIndex == null) return NaN;
+
     const numeric = Number(rawIndex);
     if (!Number.isFinite(numeric)) return NaN;
 
@@ -919,12 +995,37 @@ export class EnvoyMqttService {
 
     for (const sensor of this.dailySensors) {
       const currentValue = currentData[sensor];
-      const midnightRef = this.midnightReferences[sensor];
-      if (currentValue == null || midnightRef == null) continue;
+      const midnightRef = Number(this.midnightReferences[sensor]);
+      if (currentValue == null || !Number.isFinite(midnightRef)) continue;
 
-      const diff = Number(currentValue) - Number(midnightRef);
-      const rounded = Math.round(diff);
-      dailyValues[sensor.replace("whLifetime", "today")] = Math.max(0, rounded);
+      const todayField = sensor.replace("whLifetime", "today");
+      const diff = Number(currentValue) - midnightRef;
+      const rounded = Math.max(0, Math.round(diff));
+
+      // Garde-fou de plausibilite: la consommation/production "du jour" ne
+      // peut physiquement pas depasser tout ce qui a ete accumule AVANT meme
+      // le debut de la journee (whLifetime_00h) — sauf tout juste apres la
+      // pose d'un capteur, quand whLifetime_00h est encore proche de 0 (donc
+      // le garde-fou ne s'applique qu'a partir d'une reference non nulle). Un
+      // depassement signale presque toujours un whLifetime_00h gelé sur une
+      // valeur invalide (voir checkAndUpdateMidnightReferences) suivi d'un
+      // rattrapage brutal de la source amont — jamais une vraie
+      // consommation/production instantanee. Voir incident 2026-09-21/22:
+      // to_grid/conso_net auraient sinon affiché 98710 Wh de "today" (la
+      // lifetime entiere) au lieu d'environ 0.
+      if (midnightRef > 0 && rounded > midnightRef) {
+        this.log.warn("valeur 'today' jugée aberrante, dernière valeur plausible republiée", {
+          sensor,
+          midnightRef,
+          currentValue,
+          rejectedToday: rounded,
+        });
+        dailyValues[todayField] = this.lastGoodDailyValues[todayField] ?? 0;
+        continue;
+      }
+
+      this.lastGoodDailyValues[todayField] = rounded;
+      dailyValues[todayField] = rounded;
     }
 
     return dailyValues;

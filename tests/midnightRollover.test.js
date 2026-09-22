@@ -179,6 +179,67 @@ test("un fichier d'etat avec un lastMidnightCheck invalide est ignoré", () => {
   }
 });
 
+test("rollover minuit: une valeur figee a 0 (source amont invalide) est rejetée, l'ancien _00h est conservé et retenté au cycle suivant", async () => {
+  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
+  const { service, publishedTopics } = createService({ midnightReferencesStateFile: stateFilePath });
+
+  try {
+    // Reproduit l'incident 2026-09-21/22: to_grid/conso_net figés à 0 côté
+    // MQTT depuis ~12h avant minuit (source amont indisponible), pendant que
+    // prod/conso_all (sources internes Envoy) restent valides.
+    service.getNowPartsInTz = () => ({ date: "2026-09-21", hour: 14, minute: 0, second: 0 });
+    service.midnightReferences = {
+      "conso_all/whLifetime": 1000,
+      "to_grid/whLifetime": 500,
+    };
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1200, "to_grid/whLifetime": 550 }); // seed
+
+    service.getNowPartsInTz = () => ({ date: "2026-09-22", hour: 0, minute: 5, second: 0 });
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1800, "to_grid/whLifetime": 0 });
+
+    // conso_all (non affecté): rollover normal.
+    assert.equal(service.midnightReferences["conso_all/whLifetime"], 1800);
+    assert.equal(service.midnightReferences["conso_all/whLifetime_veille"], 1000);
+
+    // to_grid (affecté): ancien _00h conservé, PAS de _veille, capteur toujours en attente.
+    assert.equal(service.midnightReferences["to_grid/whLifetime"], 500);
+    assert.equal(service.midnightReferences["to_grid/whLifetime_veille"], undefined);
+    assert.equal(service.pendingMidnightSensors.has("to_grid/whLifetime"), true);
+
+    const to_gridTopics = publishedTopics.filter((p) => p.topic.startsWith(`${service.topicData}/to_grid`));
+    assert.equal(to_gridTopics.length, 0); // rien publié pour to_grid ce cycle
+
+    // Plus tard le meme jour, la source amont revient enfin a une vraie valeur cumulee.
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1810, "to_grid/whLifetime": 98_710 });
+
+    assert.equal(service.midnightReferences["to_grid/whLifetime"], 98_710);
+    assert.equal(service.midnightReferences["to_grid/whLifetime_veille"], 500);
+    assert.equal(service.pendingMidnightSensors.has("to_grid/whLifetime"), false);
+  } finally {
+    fs.rmSync(stateFilePath, { force: true });
+  }
+});
+
+test("calculateDailyValues rejette un 'today' aberrant (today > whLifetime_00h) et republie la derniere valeur plausible", () => {
+  const { service } = createService();
+  service.dailySensors = ["to_grid/whLifetime"];
+
+  // whLifetime_00h gelé à 0 (donnée invalide au moment du snapshot, non
+  // rattrapée par le garde-fou de checkAndUpdateMidnightReferences dans ce
+  // test unitaire ciblé sur calculateDailyValues seul).
+  service.midnightReferences = { "to_grid/whLifetime": 0 };
+
+  const dailyValues = service.calculateDailyValues({ "to_grid/whLifetime": 100 });
+  assert.equal(dailyValues["to_grid/today"], 100); // midnightRef=0: garde-fou desactive, valeur normale
+
+  service.midnightReferences = { "to_grid/whLifetime": 50_000 };
+
+  // Rattrapage brutal de la source amont: today calculé vaudrait 98710 (>
+  // midnightRef), signe quasi certain d'un whLifetime_00h invalide ailleurs.
+  const dailyValuesAfterCatchUp = service.calculateDailyValues({ "to_grid/whLifetime": 148_710 });
+  assert.equal(dailyValuesAfterCatchUp["to_grid/today"], 100); // derniere valeur plausible republiée
+});
+
 test("checkAndUpdateMidnightReferences ecrit le fichier d'etat (index_00h + index_00h_veille) lors d'un rollover", async () => {
   const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
 

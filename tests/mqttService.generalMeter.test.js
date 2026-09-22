@@ -143,6 +143,26 @@ test("parseGeneralMeterPayload extrait voltage/current/import/export (kWh -> Wh)
   assert.equal(exportWh, 7_420); // produced_energy: 7.42 kWh
 });
 
+test("parseGeneralMeterPayload traite un champ export/import explicitement null comme invalide, pas comme 0", () => {
+  // Number(null) === 0: piège JS qui, sans garde-fou, ferait lire un payload
+  // MQTT transitoire (device indisponible, champ null) comme "0 Wh" — voir
+  // incident 2026-09-21/22 (to_grid/conso_net figés à 0 pendant ~26h).
+  const { service } = createService();
+  const payload = JSON.stringify({
+    current: 14.47,
+    energy: null,
+    energy_flow: "consuming",
+    power: 3260,
+    produced_energy: null,
+    voltage: 226.8,
+  });
+
+  const { importWh, exportWh } = service.parseGeneralMeterPayload(payload);
+
+  assert.equal(Number.isFinite(importWh), false);
+  assert.equal(Number.isFinite(exportWh), false);
+});
+
 test("applyGeneralMeterReading: sans baseline configurée, la lecture est ignorée", () => {
   const { service } = createService(); // pas de baseline
   service.applyGeneralMeterReading(service.generalMeter.state.import, 4_769_550, "import");
