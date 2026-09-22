@@ -1,5 +1,10 @@
 .DEFAULT_GOAL := help
 
+# Charge .env s'il existe (ex: PROD_MQTT_HOST, voir .env.example) et exporte
+# ses variables vers les commandes lancées ci-dessous (ex: make diag).
+-include .env
+export
+
 .PHONY: help run diag docker-build docker-run simulate-midnight-rollover release release-patch release-minor release-major release-docker release-docker-push
 
 help: ## Affiche l'aide
@@ -11,7 +16,7 @@ help: ## Affiche l'aide
 run: ## Lance le service (nécessite config.yaml)
 	node src/index.js
 
-diag: ## Diagnostique MQTT + Envoy local sans lancer le service (token récupéré via MQTT, aucun appel au cloud Enphase)
+diag: ## Diagnostique MQTT + Envoy local sans lancer le service (cible PROD_MQTT_HOST si défini dans .env, sinon mqtt.host de config.yaml)
 	node scripts/diag.js
 
 simulate-midnight-rollover: ## Force le rollover minuit au prochain tick (test, redémarrer le service après)

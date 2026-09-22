@@ -63,8 +63,12 @@ async function main() {
     console.log(`${c(color.red, "FAIL")} Configuration — ${err?.message ?? String(err)}`);
     process.exit(1);
   }
+  const prodMqttHost = process.env.PROD_MQTT_HOST?.trim();
+  const mqttHost = prodMqttHost || config.mqttHost;
+  const mqttHostSource = prodMqttHost ? "PROD_MQTT_HOST" : "mqtt.host (config.yaml)";
+
   console.log(
-    `config OK — serial=${config.serialNumber} envoy=${config.localEnvoyUrl} mqtt=${config.mqttHost}:${config.mqttPort}`,
+    `config OK — serial=${config.serialNumber} envoy=${config.localEnvoyUrl} mqtt=${mqttHost}:${config.mqttPort} (source: ${mqttHostSource})`,
   );
 
   const log = createLogger({ level: VERBOSE ? "debug" : "error", component: "diag" });
@@ -81,7 +85,7 @@ async function main() {
   const topicDebug = `${config.mqttBaseTopic}/${config.serialNumber}/debug`;
   const topicAccessToken = `${topicDebug}/access_token`;
   const topicAccessTokenRequest = `${topicAccessToken}/request`;
-  const mqttUrl = `mqtt://${config.mqttHost}:${config.mqttPort}`;
+  const mqttUrl = `mqtt://${mqttHost}:${config.mqttPort}`;
 
   section("MQTT");
 
