@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help run docker-build docker-run simulate-midnight-rollover release release-patch release-minor release-major release-docker release-docker-push
+.PHONY: help run diag docker-build docker-run simulate-midnight-rollover release release-patch release-minor release-major release-docker release-docker-push
 
 help: ## Affiche l'aide
 	@printf "\nTargets disponibles:\n\n"
@@ -10,6 +10,9 @@ help: ## Affiche l'aide
 
 run: ## Lance le service (nécessite config.yaml)
 	node src/index.js
+
+diag: ## Diagnostique MQTT + Envoy local sans lancer le service (token récupéré via MQTT, aucun appel au cloud Enphase)
+	node scripts/diag.js
 
 simulate-midnight-rollover: ## Force le rollover minuit au prochain tick (test, redémarrer le service après)
 	./scripts/simulate-midnight-rollover.sh

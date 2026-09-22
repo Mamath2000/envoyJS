@@ -503,4 +503,19 @@ export class EnvoyApi {
     this.eidMappingCache = undefined;
     this.eidMappingCacheAt = undefined;
   }
+
+  // Lecture du token courant, utilisée par EnvoyMqttService.handleAccessTokenRequest
+  // pour répondre à scripts/diag.js sur demande MQTT.
+  getAuthSnapshot() {
+    if (!this.isTokenValid) return null;
+    return { authToken: this.authToken, tokenExpiresAt: this.tokenExpiresAt };
+  }
+
+  // Injecte un token déjà obtenu ailleurs (ex: reçu via MQTT, voir
+  // scripts/diag.js) sans passer par authenticate()/le cloud Enphase.
+  restoreAuthSnapshot({ authToken, tokenExpiresAt } = {}) {
+    if (!authToken || !Number.isFinite(tokenExpiresAt)) return;
+    this.authToken = authToken;
+    this.tokenExpiresAt = tokenExpiresAt;
+  }
 }

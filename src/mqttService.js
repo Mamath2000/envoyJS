@@ -31,6 +31,11 @@ export class EnvoyMqttService {
     this.topicRaw = `${this.baseTopic}/${this.serial}/raw`;
     this.topicData = `${this.baseTopic}/${this.serial}/data`;
     this.topicDebug = `${this.baseTopic}/${this.serial}/debug`;
+    // Requête/réponse ponctuelle pour scripts/diag.js: le token n'est jamais
+    // publié en continu (secret sensible), seulement sur demande explicite,
+    // et sans retain — voir handleAccessTokenRequest.
+    this.topicAccessTokenRequest = `${this.topicDebug}/access_token/request`;
+    this.topicAccessToken = `${this.topicDebug}/access_token`;
 
     this.dailySensors = [
       "conso_all/whLifetime",
@@ -412,9 +417,18 @@ export class EnvoyMqttService {
       });
     }
 
+    client.subscribe(this.topicAccessTokenRequest);
+
     client.on("message", (topicBuf, payloadBuf) => {
       const topic = String(topicBuf);
       const payload = payloadBuf.toString();
+
+      if (topic === this.topicAccessTokenRequest) {
+        this.handleAccessTokenRequest().catch((err) => {
+          this.log.warn("réponse access_token MQTT échouée", { message: err?.message ?? String(err) });
+        });
+        return;
+      }
 
       if (this.generalMeter.topic && topic === this.generalMeter.topic) {
         this.generalMeter.state.lastRawPayload = payload;
@@ -597,6 +611,21 @@ export class EnvoyMqttService {
 
   async publishStatus(status) {
     await this.publish(`${this.baseTopic}/${this.serial}/lwt`, status, { retain: true });
+  }
+
+  // Répond au topic de requête (voir constructeur) avec le token d'accès
+  // Envoy courant, pour que scripts/diag.js puisse tester l'Envoy local sans
+  // jamais appeler le cloud Enphase lui-même. Publié SANS retain et
+  // uniquement sur demande explicite (jamais en continu): c'est un secret
+  // sensible — n'importe qui avec accès au broker pourrait sinon interroger
+  // l'Envoy en se faisant passer pour ce service tant que le token n'a pas
+  // expiré (12h).
+  async handleAccessTokenRequest() {
+    const snapshot = this.api.getAuthSnapshot();
+    const payload = snapshot
+      ? JSON.stringify({ token: snapshot.authToken, expiresAt: snapshot.tokenExpiresAt })
+      : JSON.stringify({ error: "aucun token valide actuellement" });
+    await this.publish(this.topicAccessToken, payload, { retain: false, debug: false });
   }
 
   // Republie le dernier payload brut de chaque endpoint Envoy (avant tout
