@@ -326,6 +326,36 @@ Le tout premier appel apres le demarrage du service memorise simplement le jour 
 
 **Pourquoi pas un instantané intermediaire ("previousFullData")**: une version anterieure de ce mecanisme calculait `yesterday` contre un instantané RAM du tick precedent, mis a jour uniquement quand `getCorrectedFullData()` reussissait. En cas d'echecs de polling Envoy repetes et prolonges (deconnexion, souci d'auth — plausible pour un appareil HTTP local), cet instantané pouvait geler silencieusement pres de l'ancien `_00h` pendant des heures, sans autre signal qu'un `warn` répété par tick. Si ce gel avait commencé juste apres le rollover de la veille, le rollover suivant calculait alors un delta minuscule contre une valeur presque identique a l'ancien `_00h` — incident constaté en prod le 2026-08-02 (`prod/yesterday` tombé a 2 Wh au lieu d'environ 15837 Wh), **sans aucun redemarrage du service** (confirmé via `docker compose ps`, uptime continu). `_00h` n'a jamais souffert de ce risque, precisement parce qu'il n'a jamais dependu d'un cache intermediaire — `_00h_veille` reprend ce meme principe pour `yesterday`, eliminant la classe de bug entierement plutot que de la contourner.
 
+#### Validation du snapshot minuit (`assessMidnightSnapshotValidity`)
+
+Avant de geler une valeur comme `_00h`, `checkAndUpdateMidnightReferences()` la valide via `assessMidnightSnapshotValidity(value, previousTodayRef)`. Un `whLifetime` est un compteur cumulatif: il ne peut que croitre d'un jour a l'autre. Sont rejetees:
+
+- une valeur non numerique;
+- une valeur retombee a 0 alors que l'ancien `_00h` est non nul;
+- une valeur inferieure a l'ancien `_00h` (compteur qui recule).
+
+Ces cas signalent presque toujours une source amont invalide/indisponible exactement au moment du snapshot (payload MQTT `null`/glitch du capteur general — incident 2026-09-21/22: `to_grid`/`conso_net` figes a 0 pendant ~26h, puis geles comme `_00h`). Un ancien `_00h` egal a 0 laisse tout passer (capteur tout juste rebaseline).
+
+Lors d'un changement de jour, tous les `dailySensors` entrent dans `this.pendingMidnightSensors`. Un capteur invalide (ou absent de `currentData`) reste **en attente**: son ancien `_00h` est conserve, un warn `snapshot minuit ignoré` est logge, et le rollover est **retente a chaque cycle suivant** (sans attendre le lendemain) jusqu'a obtenir une lecture valide. Seuls les capteurs effectivement valides sont publies (`_00h`, `yesterday`) et retires de l'attente. Au premier appel apres demarrage, l'attente est vide (pas de rollover).
+
+Complement cote source: `normalizeGeneralMeterIndexWh` traite un champ `null` comme invalide (`NaN`) et non comme 0 (`Number(null) === 0`).
+
+#### Plafond physique des valeurs `today` (garde-fou d'aberration)
+
+`calculateDailyValues()` compare chaque `today` calcule a un plafond en Wh/jour propre au capteur (`limits.max_daily_wh` dans `config.yaml`, cle = nom court du capteur). Si `today` depasse ce plafond, la valeur est jugee aberrante — cas typique: `whLifetime_00h` gele sur une valeur invalide, puis rattrapage brutal de la source amont (incident 2026-09-21/22: `to_grid` aurait affiche 98710 Wh) — et la **derniere valeur plausible** est republiee (0 si aucune n'est connue, par exemple juste apres un redemarrage). Un warn `valeur 'today' jugée aberrante` est logge.
+
+```yaml
+limits:
+  max_daily_wh:
+    prod: 20000        # limite physique de l'installation PV
+    to_grid: 20000     # export <= production
+    eco: 20000         # autoconsommation <= production
+    conso_all: 120000
+    conso_net: 120000
+```
+
+Valeurs par defaut identiques a l'exemple ci-dessus; un capteur non liste (ou une valeur invalide/<= 0) retombe sur le defaut. Le plafond est un seuil **absolu** en Wh/jour, volontairement pas relatif a `_00h`: l'index `_00h` d'un capteur rebaseline (ex: `eco` = prod - baseline - export) n'a aucune valeur absolue significative, et un today normal peut largement le depasser.
+
 #### Persistance de `midnightReferences` et `lastMidnightCheck`
 
 Les references `_00h` et `this.lastMidnightCheck` (dernier jour pour lequel le rollover a ete effectue) sont persistees dans un fichier JSON local (`state.midnight_references_file`, defaut `data/midnight-references-state.json`), ecrit directement (sans etape intermediaire) a chaque changement via `saveMidnightReferencesToDisk()`, et relu de facon synchrone au demarrage via `loadMidnightReferencesFromDisk()` — avant meme la premiere lecture Envoy.
@@ -655,7 +685,7 @@ Applicable a chaque capteur de `dailySensors`: `conso_all`, `conso_net`, `prod`,
 
 | Champ | Origine / Calcul | Description |
 |---|---|---|
-| `<capteur>_today` | Calcule: `max(0, round(whLifetime actuel - reference _00h))` | Valeur cumulee depuis minuit, heure locale (`timezone.name`) |
+| `<capteur>_today` | Calcule: `max(0, round(whLifetime actuel - reference _00h))` | Valeur cumulee depuis minuit, heure locale (`timezone.name`). Plafonnee par `limits.max_daily_wh` (voir 5.2): au-dela, derniere valeur plausible republiee |
 | `<capteur>_yesterday` | Calcule: valeur de `<capteur>_today` figee au moment du dernier changement de jour detecte (rollover) | Valeur de la veille, mise a jour une fois par jour au rollover, stable le reste du temps |
 | `<capteur>_whLifetime_00h` (topic technique, retained) | Recopie de la reference interne `midnightReferences[<capteur>]` | Reference whLifetime prise a minuit, utilisee en interne pour calculer `*_today`; publiee pour debug/HA, pas un calcul en soi |
 

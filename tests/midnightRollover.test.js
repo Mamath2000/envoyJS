@@ -220,24 +220,47 @@ test("rollover minuit: une valeur figee a 0 (source amont invalide) est rejetée
   }
 });
 
-test("calculateDailyValues rejette un 'today' aberrant (today > whLifetime_00h) et republie la derniere valeur plausible", () => {
+test("calculateDailyValues rejette un 'today' au-dela du plafond physique et republie la derniere valeur plausible", () => {
   const { service } = createService();
   service.dailySensors = ["to_grid/whLifetime"];
+  service.midnightReferences = { "to_grid/whLifetime": 500 };
 
-  // whLifetime_00h gelé à 0 (donnée invalide au moment du snapshot, non
-  // rattrapée par le garde-fou de checkAndUpdateMidnightReferences dans ce
-  // test unitaire ciblé sur calculateDailyValues seul).
-  service.midnightReferences = { "to_grid/whLifetime": 0 };
+  const ok = service.calculateDailyValues({ "to_grid/whLifetime": 600 });
+  assert.equal(ok["to_grid/today"], 100);
 
-  const dailyValues = service.calculateDailyValues({ "to_grid/whLifetime": 100 });
-  assert.equal(dailyValues["to_grid/today"], 100); // midnightRef=0: garde-fou desactive, valeur normale
+  // Rattrapage brutal de la source amont: today calculé = 98210 > 20000 Wh.
+  const afterCatchUp = service.calculateDailyValues({ "to_grid/whLifetime": 98_710 });
+  assert.equal(afterCatchUp["to_grid/today"], 100); // derniere valeur plausible republiée
+});
 
-  service.midnightReferences = { "to_grid/whLifetime": 50_000 };
+test("calculateDailyValues: eco sous le plafond n'est pas rejeté quel que soit _00h (index rebaseliné)", () => {
+  const { service } = createService();
+  service.dailySensors = ["eco/whLifetime"];
+  service.midnightReferences = { "eco/whLifetime": 5_000 };
 
-  // Rattrapage brutal de la source amont: today calculé vaudrait 98710 (>
-  // midnightRef), signe quasi certain d'un whLifetime_00h invalide ailleurs.
-  const dailyValuesAfterCatchUp = service.calculateDailyValues({ "to_grid/whLifetime": 148_710 });
-  assert.equal(dailyValuesAfterCatchUp["to_grid/today"], 100); // derniere valeur plausible republiée
+  const dailyValues = service.calculateDailyValues({ "eco/whLifetime": 14_126 });
+  assert.equal(dailyValues["eco/today"], 9_126);
+});
+
+test("calculateDailyValues: conso_all peut dépasser 20000 Wh/jour mais est plafonnée à 120000", () => {
+  const { service } = createService();
+  service.dailySensors = ["conso_all/whLifetime"];
+  service.midnightReferences = { "conso_all/whLifetime": 1_000 };
+
+  const dailyValues = service.calculateDailyValues({ "conso_all/whLifetime": 47_316 });
+  assert.equal(dailyValues["conso_all/today"], 46_316);
+
+  const aberrant = service.calculateDailyValues({ "conso_all/whLifetime": 130_000 });
+  assert.equal(aberrant["conso_all/today"], 46_316); // derniere valeur plausible republiée
+});
+
+test("calculateDailyValues: plafond surchargeable via config.maxDailyWh", () => {
+  const { service } = createService({ maxDailyWh: { eco: 5_000 } });
+  service.dailySensors = ["eco/whLifetime"];
+  service.midnightReferences = { "eco/whLifetime": 0 };
+
+  assert.equal(service.calculateDailyValues({ "eco/whLifetime": 4_000 })["eco/today"], 4_000);
+  assert.equal(service.calculateDailyValues({ "eco/whLifetime": 6_000 })["eco/today"], 4_000);
 });
 
 test("checkAndUpdateMidnightReferences ecrit le fichier d'etat (index_00h + index_00h_veille) lors d'un rollover", async () => {

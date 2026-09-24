@@ -8,6 +8,26 @@ try {
   yaml = null;
 }
 
+// Plafonds physiques "today" (Wh/jour) par capteur journalier (nom court, sans
+// "/whLifetime"). Surchargeables via limits.max_daily_wh dans config.yaml.
+export const DEFAULT_MAX_DAILY_WH = {
+  prod: 20_000,
+  to_grid: 20_000,
+  eco: 20_000,
+  conso_all: 120_000,
+  conso_net: 120_000,
+};
+
+function parseMaxDailyWh(raw) {
+  const result = { ...DEFAULT_MAX_DAILY_WH };
+  if (raw == null || typeof raw !== "object") return result;
+  for (const [sensor, value] of Object.entries(raw)) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) result[sensor] = numeric;
+  }
+  return result;
+}
+
 function findConfigFile() {
   const candidates = [
     path.join(process.cwd(), "config.yaml"),
@@ -150,6 +170,8 @@ export function loadConfig() {
     prodBaselineWh: Number.isFinite(Number(cfg?.sensors?.general_meter?.prod_baseline_wh))
       ? Number(cfg?.sensors?.general_meter?.prod_baseline_wh)
       : undefined,
+
+    maxDailyWh: parseMaxDailyWh(cfg?.limits?.max_daily_wh),
 
     midnightReferencesStateFile: String(cfg?.state?.midnight_references_file ?? "").trim() || undefined,
 

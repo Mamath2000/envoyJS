@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import mqtt from "mqtt";
 
+import { DEFAULT_MAX_DAILY_WH } from "./config.js";
 import { sleep } from "./utils.js";
 import { publishHaAutodiscoveryDynamic } from "./ha/discovery.js";
 import { createLogger } from "./logger.js";
@@ -44,6 +45,12 @@ export class EnvoyMqttService {
       "eco/whLifetime",
       "to_grid/whLifetime",
     ];
+    // Plafond physique "today" (Wh/jour) par capteur, voir limits.max_daily_wh
+    // (config.js). Un capteur absent de la table n'a pas de plafond.
+    this.maxDailyWh = {};
+    for (const [name, maxWh] of Object.entries(this.config.maxDailyWh ?? DEFAULT_MAX_DAILY_WH)) {
+      this.maxDailyWh[`${name}/whLifetime`] = maxWh;
+    }
 
     this.midnightReferences = {};
     this.lastMidnightCheck = undefined;
@@ -1002,22 +1009,17 @@ export class EnvoyMqttService {
       const diff = Number(currentValue) - midnightRef;
       const rounded = Math.max(0, Math.round(diff));
 
-      // Garde-fou de plausibilite: la consommation/production "du jour" ne
-      // peut physiquement pas depasser tout ce qui a ete accumule AVANT meme
-      // le debut de la journee (whLifetime_00h) — sauf tout juste apres la
-      // pose d'un capteur, quand whLifetime_00h est encore proche de 0 (donc
-      // le garde-fou ne s'applique qu'a partir d'une reference non nulle). Un
-      // depassement signale presque toujours un whLifetime_00h gelé sur une
-      // valeur invalide (voir checkAndUpdateMidnightReferences) suivi d'un
-      // rattrapage brutal de la source amont — jamais une vraie
-      // consommation/production instantanee. Voir incident 2026-09-21/22:
-      // to_grid/conso_net auraient sinon affiché 98710 Wh de "today" (la
-      // lifetime entiere) au lieu d'environ 0.
-      if (midnightRef > 0 && rounded > midnightRef) {
+      // Garde-fou de plausibilite: un "today" au-dela du plafond physique du
+      // systeme (this.maxDailyWh) signale presque toujours un whLifetime_00h
+      // gelé sur une valeur invalide (voir checkAndUpdateMidnightReferences)
+      // suivi d'un rattrapage brutal de la source amont. Voir incident
+      // 2026-09-21/22: to_grid aurait sinon affiché 98710 Wh de "today".
+      if (rounded > (this.maxDailyWh[sensor] ?? Infinity)) {
         this.log.warn("valeur 'today' jugée aberrante, dernière valeur plausible republiée", {
           sensor,
           midnightRef,
           currentValue,
+          maxDailyWh: this.maxDailyWh[sensor],
           rejectedToday: rounded,
         });
         dailyValues[todayField] = this.lastGoodDailyValues[todayField] ?? 0;

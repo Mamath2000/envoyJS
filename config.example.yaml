@@ -57,6 +57,17 @@ sensors:
 state:
   midnight_references_file: "data/midnight-references-state.json"  # persistance des references _00h/dernier rollover entre redémarrages
 
+limits:
+  # Plafond physique de la valeur "today" (Wh/jour) par capteur journalier.
+  # Au-dela, la valeur est jugee aberrante (whLifetime_00h invalide + rattrapage
+  # de la source amont) et la derniere valeur plausible est republiee.
+  max_daily_wh:
+    prod: 20000
+    to_grid: 20000
+    eco: 20000
+    conso_all: 120000
+    conso_net: 120000
+
 discovery:
   enabled: true
 
