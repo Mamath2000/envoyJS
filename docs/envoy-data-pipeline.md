@@ -332,7 +332,8 @@ Avant de geler une valeur comme `_00h`, `checkAndUpdateMidnightReferences()` la 
 
 - une valeur non numerique;
 - une valeur retombee a 0 alors que l'ancien `_00h` est non nul;
-- une valeur inferieure a l'ancien `_00h` (compteur qui recule).
+- une valeur inferieure a l'ancien `_00h` (compteur qui recule);
+- un saut depuis l'ancien `_00h` superieur au plafond `limits.max_daily_wh` du capteur (voir plus bas), **multiplie par le nombre de jours ecoules depuis le dernier rollover** (un service arrete 3 jours accepte 3 fois le plafond, sinon le rollover serait rejete indefiniment). Cible notamment `eco`, index derive (`prod - export`) gonflé quand `to_grid` est fige a 0: incident 2026-09-24, `eco_00h` gelé a 730246 au lieu de ~655485, qui bloquait `eco/today` a 0 (delta negatif clampé) pendant des jours.
 
 Ces cas signalent presque toujours une source amont invalide/indisponible exactement au moment du snapshot (payload MQTT `null`/glitch du capteur general — incident 2026-09-21/22: `to_grid`/`conso_net` figes a 0 pendant ~26h, puis geles comme `_00h`). Un ancien `_00h` egal a 0 laisse tout passer (capteur tout juste rebaseline).
 

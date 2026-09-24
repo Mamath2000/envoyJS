@@ -60,6 +60,7 @@ export class EnvoyMqttService {
     // sans attendre le changement de jour suivant, quand la source amont
     // etait invalide/indisponible exactement au moment du snapshot.
     this.pendingMidnightSensors = new Set();
+    this.midnightGapDays = 1;
     // Dernieres valeurs "today" jugees plausibles, republiees telles quelles
     // quand calculateDailyValues detecte un saut aberrant (voir plus bas).
     this.lastGoodDailyValues = {};
@@ -696,7 +697,7 @@ export class EnvoyMqttService {
   // ~26h, puis gelés comme _00h au rollover suivant), jamais un vrai
   // comportement du compteur — on la rejette plutot que de geler une
   // reference fausse.
-  assessMidnightSnapshotValidity(value, previousTodayRef) {
+  assessMidnightSnapshotValidity(value, previousTodayRef, { maxDeltaWh } = {}) {
     if (!Number.isFinite(value)) return { valid: false, reason: "valeur non numerique" };
 
     if (previousTodayRef != null) {
@@ -709,6 +710,17 @@ export class EnvoyMqttService {
       }
       if (value < previousTodayRef) {
         return { valid: false, reason: "valeur inferieure a l'ancienne reference _00h (compteur qui recule)" };
+      }
+      // Saut au-dela du plafond physique (maxDeltaWh, deja mis a l'echelle du
+      // nombre de jours ecoules): typique d'un index derive (eco = prod -
+      // export) gonflé par une source amont figee a 0 au moment du snapshot,
+      // que le seul controle de croissance ne detecte pas (incident
+      // 2026-09-24: eco_00h gelé a 730246 au lieu de ~655485).
+      if (Number.isFinite(maxDeltaWh) && value - previousTodayRef > maxDeltaWh) {
+        return {
+          valid: false,
+          reason: `saut de ${Math.round(value - previousTodayRef)} Wh depuis l'ancienne reference _00h, au-dela du plafond de ${Math.round(maxDeltaWh)} Wh`,
+        };
       }
     }
 
@@ -740,6 +752,10 @@ export class EnvoyMqttService {
       // retentes aux cycles suivants (this.pendingMidnightSensors), sans
       // attendre le prochain changement de jour.
       this.pendingMidnightSensors = new Set(this.dailySensors);
+      // Nombre de jours depuis le dernier rollover (>1 si le service est reste
+      // arrete): met a l'echelle le plafond de saut de assessMidnightSnapshotValidity.
+      const elapsedMs = Date.parse(currentDate) - Date.parse(this.lastMidnightCheck);
+      this.midnightGapDays = Number.isFinite(elapsedMs) ? Math.max(1, Math.round(elapsedMs / 86_400_000)) : 1;
       this.lastMidnightCheck = currentDate;
     }
 
@@ -764,7 +780,9 @@ export class EnvoyMqttService {
       const value = Number(currentData[sensor]);
       const previousTodayRef = this.midnightReferences[sensor];
 
-      const validity = this.assessMidnightSnapshotValidity(value, previousTodayRef);
+      const validity = this.assessMidnightSnapshotValidity(value, previousTodayRef, {
+        maxDeltaWh: this.maxDailyWh[sensor] * (this.midnightGapDays ?? 1),
+      });
       if (!validity.valid) {
         this.log.warn("snapshot minuit ignoré: donnée amont jugée invalide, ancien _00h conservé", {
           sensor,

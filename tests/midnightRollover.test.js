@@ -210,11 +210,52 @@ test("rollover minuit: une valeur figee a 0 (source amont invalide) est rejetée
     assert.equal(to_gridTopics.length, 0); // rien publié pour to_grid ce cycle
 
     // Plus tard le meme jour, la source amont revient enfin a une vraie valeur cumulee.
-    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1810, "to_grid/whLifetime": 98_710 });
+    await service.checkAndUpdateMidnightReferences({ "conso_all/whLifetime": 1810, "to_grid/whLifetime": 2_500 });
 
-    assert.equal(service.midnightReferences["to_grid/whLifetime"], 98_710);
+    assert.equal(service.midnightReferences["to_grid/whLifetime"], 2_500);
     assert.equal(service.midnightReferences["to_grid/whLifetime_veille"], 500);
     assert.equal(service.pendingMidnightSensors.has("to_grid/whLifetime"), false);
+  } finally {
+    fs.rmSync(stateFilePath, { force: true });
+  }
+});
+
+test("rollover: un snapshot eco gonflé (saut > plafond) est ignoré puis retenté, ancien _00h conservé", async () => {
+  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
+  try {
+    const { service } = createService({ midnightReferencesStateFile: stateFilePath });
+    service.dailySensors = ["eco/whLifetime"];
+    service.getNowPartsInTz = () => ({ date: "2026-09-23", hour: 14, minute: 0, second: 0 });
+    service.midnightReferences = { "eco/whLifetime": 626_103 };
+    await service.checkAndUpdateMidnightReferences({ "eco/whLifetime": 630_000 }); // seed
+
+    service.getNowPartsInTz = () => ({ date: "2026-09-24", hour: 0, minute: 0, second: 5 });
+    await service.checkAndUpdateMidnightReferences({ "eco/whLifetime": 730_246 }); // +104143 > 20000
+    assert.equal(service.midnightReferences["eco/whLifetime"], 626_103);
+    assert.equal(service.pendingMidnightSensors.has("eco/whLifetime"), true);
+
+    // La source revient a une valeur plausible: le rollover aboutit.
+    await service.checkAndUpdateMidnightReferences({ "eco/whLifetime": 637_000 });
+    assert.equal(service.midnightReferences["eco/whLifetime"], 637_000);
+    assert.equal(service.midnightReferences["eco/whLifetime_veille"], 626_103);
+  } finally {
+    fs.rmSync(stateFilePath, { force: true });
+  }
+});
+
+test("rollover: le plafond de saut est mis a l'echelle du nombre de jours d'arret du service", async () => {
+  const stateFilePath = path.join(os.tmpdir(), `envoyjs-midnightrefs-${Date.now()}-${Math.random()}.json`);
+  try {
+    const { service } = createService({ midnightReferencesStateFile: stateFilePath });
+    service.dailySensors = ["eco/whLifetime"];
+    service.getNowPartsInTz = () => ({ date: "2026-09-20", hour: 14, minute: 0, second: 0 });
+    service.midnightReferences = { "eco/whLifetime": 100_000 };
+    await service.checkAndUpdateMidnightReferences({ "eco/whLifetime": 100_000 }); // seed
+
+    // 3 jours plus tard: +45000 Wh reste plausible (< 3 x 20000)
+    service.getNowPartsInTz = () => ({ date: "2026-09-23", hour: 9, minute: 0, second: 0 });
+    await service.checkAndUpdateMidnightReferences({ "eco/whLifetime": 145_000 });
+    assert.equal(service.midnightReferences["eco/whLifetime"], 145_000);
   } finally {
     fs.rmSync(stateFilePath, { force: true });
   }
