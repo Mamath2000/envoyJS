@@ -293,7 +293,16 @@ export class EnvoyMqttService {
         midnightReferences: { index_00h: index00h, index_00h_veille: index00hVeille },
         lastMidnightCheck: this.lastMidnightCheck ?? null,
       };
-      fs.writeFileSync(stateFilePath, JSON.stringify(payload), "utf-8");
+
+      // Ecriture atomique (tmp + rename, meme repertoire donc meme systeme
+      // de fichiers): un writeFileSync direct sur stateFilePath laisserait
+      // un JSON tronque en cas de coupure/kill pendant l'ecriture (ex:
+      // redemarrage brutal du container Docker), faisant echouer le parse
+      // au prochain demarrage et reinitialisant _00h sur l'instant du
+      // redemarrage au lieu du vrai minuit (voir loadMidnightReferencesFromDisk).
+      const tmpPath = `${stateFilePath}.${process.pid}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(payload), "utf-8");
+      fs.renameSync(tmpPath, stateFilePath);
     } catch (err) {
       this.log.warn("impossible de sauvegarder les references minuit", {
         stateFilePath,
