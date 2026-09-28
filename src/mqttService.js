@@ -550,10 +550,7 @@ export class EnvoyMqttService {
           adjustedRawData.conso_net_energy_flow = this.generalMeter.state.energyFlow;
         }
 
-        for (const [field, value] of Object.entries(adjustedRawData)) {
-          const topic = `${this.topicRaw}/${field}`;
-          await this.publish(topic, String(value), { retain: false, debug: false });
-        }
+        await this.publishFields(this.topicRaw, adjustedRawData, { retain: false, debug: false });
       } catch (err) {
         this.log.warn("erreur lecture raw Envoy", { message: err?.message ?? String(err) });
       }
@@ -581,15 +578,8 @@ export class EnvoyMqttService {
 
         const dailyValues = this.calculateDailyValues(fullData);
 
-        for (const [field, value] of Object.entries(fullData)) {
-          const topic = `${this.topicData}/${field}`;
-          await this.publish(topic, String(value), { retain: true });
-        }
-
-        for (const [field, value] of Object.entries(dailyValues)) {
-          const topic = `${this.topicData}/${field}`;
-          await this.publish(topic, String(value), { retain: true });
-        }
+        await this.publishFields(this.topicData, fullData, { retain: true });
+        await this.publishFields(this.topicData, dailyValues, { retain: true });
 
         if (this.config.pvProdSensorEnabled) {
           await publishPvProductionSensors({ mqtt: this.mustClient(), topic: this.config.pvProdTopic, data: fullData, log: this.log.child("ha") });
@@ -1017,5 +1007,18 @@ export class EnvoyMqttService {
         else resolve();
       });
     });
+  }
+
+  // Publie chaque champ de `fields` sous `${topicPrefix}/{field}`, en
+  // parallele: chaque topic est independant, donc attendre sequentiellement
+  // l'ACK MQTT de chacun avant de publier le suivant (comme le faisait un
+  // for..await ici) n'apporte aucune garantie supplementaire et ajoute une
+  // latence cumulee inutile a chaque cycle (surtout en haute frequence).
+  async publishFields(topicPrefix, fields, opts) {
+    await Promise.all(
+      Object.entries(fields).map(([field, value]) =>
+        this.publish(`${topicPrefix}/${field}`, String(value), opts),
+      ),
+    );
   }
 }
