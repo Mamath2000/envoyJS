@@ -363,41 +363,7 @@ export class EnvoyMqttService {
       await this.initializeMissingReferences(currentData);
 
       if (this.config.haAutodiscovery) {
-        const dailyKeys = Object.keys(this.calculateDailyValues(currentData));
-        const yesterdayKeys = dailyKeys.map((k) => k.replace("today", "yesterday"));
-        const allFields = [...Object.keys(currentData), ...dailyKeys, ...yesterdayKeys];
-
-        await publishHaAutodiscoveryDynamic({
-          mqtt: client,
-          device: this.haDevice,
-          topicData: this.topicData,
-          fields: allFields,
-          sensorsDef: this.sensorsDef,
-          configTopicOverride: this.config.haDiscoveryTopic,
-          qos: this.config.haDiscoveryQos,
-          log: this.log.child("ha"),
-        });
-
-        if (this.config.pvProdSensorEnabled) {
-          await publishEnergySensorDiscovery({
-            mqtt: client,
-            baseTopic: this.config.pvProdTopic,
-            name: this.config.pvProdSensorName,
-            field: "energy",
-            log: this.log.child("ha"),
-          });
-        }
-
-        if (this.config.consoNetSensorEnabled) {
-          await publishEnergySensorDiscovery({
-            mqtt: client,
-            baseTopic: this.config.consoNetTopic,
-            name: this.config.consoNetSensorName,
-            field: "energy",
-            log: this.log.child("ha"),
-          });
-        }
-
+        await this.publishHaDiscovery(currentData);
         this.haDiscoveryPublished = true;
       }
     } catch (err) {
@@ -423,6 +389,48 @@ export class EnvoyMqttService {
 
       await new Promise((resolve) => {
         this.mqttClient?.end(true, {}, () => resolve());
+      });
+    }
+  }
+
+  // Publie l'autodiscovery HA (device-based + capteurs dedies PV/conso nette)
+  // pour l'ensemble de champs derive de `dataForFields`. Facteur commun aux
+  // trois points d'appel (demarrage, boucle full, rollover minuit) qui
+  // avaient chacun une copie de cette sequence — les garder synchronisees a
+  // la main etait une source d'oubli a chaque evolution de l'autodiscovery.
+  async publishHaDiscovery(dataForFields) {
+    const dailyKeys = Object.keys(this.calculateDailyValues(dataForFields));
+    const yesterdayKeys = dailyKeys.map((k) => k.replace("today", "yesterday"));
+    const allFields = [...Object.keys(dataForFields), ...dailyKeys, ...yesterdayKeys];
+
+    await publishHaAutodiscoveryDynamic({
+      mqtt: this.mustClient(),
+      device: this.haDevice,
+      topicData: this.topicData,
+      fields: allFields,
+      sensorsDef: this.sensorsDef,
+      configTopicOverride: this.config.haDiscoveryTopic,
+      qos: this.config.haDiscoveryQos,
+      log: this.log.child("ha"),
+    });
+
+    if (this.config.pvProdSensorEnabled) {
+      await publishEnergySensorDiscovery({
+        mqtt: this.mustClient(),
+        baseTopic: this.config.pvProdTopic,
+        name: this.config.pvProdSensorName,
+        field: "energy",
+        log: this.log.child("ha"),
+      });
+    }
+
+    if (this.config.consoNetSensorEnabled) {
+      await publishEnergySensorDiscovery({
+        mqtt: this.mustClient(),
+        baseTopic: this.config.consoNetTopic,
+        name: this.config.consoNetSensorName,
+        field: "energy",
+        log: this.log.child("ha"),
       });
     }
   }
@@ -567,41 +575,7 @@ export class EnvoyMqttService {
         await this.checkAndUpdateMidnightReferences(fullData);
 
         if (this.config.haAutodiscovery && !this.haDiscoveryPublished) {
-          const dailyKeys = Object.keys(this.calculateDailyValues(fullData));
-          const yesterdayKeys = dailyKeys.map((k) => k.replace("today", "yesterday"));
-          const allFields = [...Object.keys(fullData), ...dailyKeys, ...yesterdayKeys];
-
-          await publishHaAutodiscoveryDynamic({
-            mqtt: this.mustClient(),
-            device: this.haDevice,
-            topicData: this.topicData,
-            fields: allFields,
-            sensorsDef: this.sensorsDef,
-            configTopicOverride: this.config.haDiscoveryTopic,
-            qos: this.config.haDiscoveryQos,
-            log: this.log.child("ha"),
-          });
-
-          if (this.config.pvProdSensorEnabled) {
-            await publishEnergySensorDiscovery({
-              mqtt: this.mustClient(),
-              baseTopic: this.config.pvProdTopic,
-              name: this.config.pvProdSensorName,
-              field: "energy",
-              log: this.log.child("ha"),
-            });
-          }
-
-          if (this.config.consoNetSensorEnabled) {
-            await publishEnergySensorDiscovery({
-              mqtt: this.mustClient(),
-              baseTopic: this.config.consoNetTopic,
-              name: this.config.consoNetSensorName,
-              field: "energy",
-              log: this.log.child("ha"),
-            });
-          }
-
+          await this.publishHaDiscovery(fullData);
           this.haDiscoveryPublished = true;
         }
 
@@ -821,10 +795,6 @@ export class EnvoyMqttService {
     // publier/persister de plus.
     if (rolledSensors.length === 0) return;
 
-    // Uniquement pour deriver les noms de champs (dailyKeys) utilises par
-    // l'autodiscovery HA plus bas — plus utilisé pour calculer yesterday.
-    const dailyValues = this.calculateDailyValues(currentData);
-
     for (const sensor of rolledSensors) {
       const todayRef = this.midnightReferences[sensor];
       const veilleRef = this.midnightReferences[`${sensor}_veille`];
@@ -841,40 +811,7 @@ export class EnvoyMqttService {
     await this.publish(`${this.topicData}/last_midnight_check`, currentDate, { retain: true });
 
     if (this.config.haAutodiscovery && this.mqttClient) {
-      const dailyKeys = Object.keys(dailyValues);
-      const yesterdayKeys = dailyKeys.map((k) => k.replace("today", "yesterday"));
-      const allFields = [...Object.keys(currentData), ...dailyKeys, ...yesterdayKeys];
-
-      await publishHaAutodiscoveryDynamic({
-        mqtt: this.mqttClient,
-        device: this.haDevice,
-        topicData: this.topicData,
-        fields: allFields,
-        sensorsDef: this.sensorsDef,
-        configTopicOverride: this.config.haDiscoveryTopic,
-        qos: this.config.haDiscoveryQos,
-        log: this.log.child("ha"),
-      });
-
-      if (this.config.pvProdSensorEnabled) {
-        await publishEnergySensorDiscovery({
-          mqtt: this.mqttClient,
-          baseTopic: this.config.pvProdTopic,
-          name: this.config.pvProdSensorName,
-          field: "energy",
-          log: this.log.child("ha"),
-        });
-      }
-
-      if (this.config.consoNetSensorEnabled) {
-        await publishEnergySensorDiscovery({
-          mqtt: this.mqttClient,
-          baseTopic: this.config.consoNetTopic,
-          name: this.config.consoNetSensorName,
-          field: "energy",
-          log: this.log.child("ha"),
-        });
-      }
+      await this.publishHaDiscovery(currentData);
     }
   }
 
