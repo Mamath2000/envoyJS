@@ -30,7 +30,6 @@ export async function publishEnergySensorDiscovery({ mqtt, baseTopic, name, fiel
     unit_of_measurement: "kWh",
     state_class: "total_increasing",
     state_topic: baseTopic,
-    json_attributes_topic: baseTopic,
     value_template: "{{ value_json.energy }}",
     origin: { name: "envoy2mqtt" },
   };
