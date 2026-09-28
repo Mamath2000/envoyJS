@@ -52,7 +52,7 @@ Le projet fournit un `Makefile` (optionnel) + les scripts npm.
 
 ### Prérequis
 
-- Node.js >= 18
+- Node.js >= 20
 - Un broker MQTT
 - Une passerelle Enphase Envoy accessible sur le LAN
 - Des identifiants Enphase (Enlighten) du **propriétaire** de l’Envoy
