@@ -66,6 +66,7 @@ export async function publishHaAutodiscoveryDynamic({
       device_class: def.device_class,
       state_class: def.state_class,
       icon: def.icon,
+      entity_category: def.entity_category,
       expire_after: def.expire_after ?? 120,
       value_template: valueTemplateFor(def),
       unique_id: `envoy_${serial}_${componentId}`,
