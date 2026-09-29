@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import mqtt from "mqtt";
 
 import { DEFAULT_MAX_DAILY_WH } from "./config.js";
@@ -136,13 +137,24 @@ export class EnvoyMqttService {
     };
 
     this.sensorsDef = {};
-    const sensorsPath = path.join(process.cwd(), "src", "device-def", "sensors-def.json");
+    // Chemin relatif au module (et non process.cwd()): reste correct quel
+    // que soit le repertoire depuis lequel le service est lance (npm start,
+    // Docker WORKDIR, ou un autre cwd) — un cwd inattendu ferait sinon
+    // echouer ce chargement en silence et desactiverait toute l'autodiscovery
+    // HA sans qu'aucun log n'explique pourquoi.
+    const sensorsPath = fileURLToPath(new URL("./device-def/sensors-def.json", import.meta.url));
     try {
-      if (fs.existsSync(sensorsPath)) {
+      if (!fs.existsSync(sensorsPath)) {
+        this.log.warn("fichier de définitions HA introuvable: autodiscovery désactivée", { sensorsPath });
+      } else {
         const content = fs.readFileSync(sensorsPath, "utf-8");
         this.sensorsDef = JSON.parse(content);
       }
-    } catch {
+    } catch (err) {
+      this.log.warn("fichier de définitions HA invalide: autodiscovery désactivée", {
+        sensorsPath,
+        message: err?.message ?? String(err),
+      });
       this.sensorsDef = {};
     }
   }
