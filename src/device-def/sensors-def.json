@@ -281,5 +281,34 @@
     "state_class": "total_increasing",
     "icon": "mdi:counter",
     "expire_after": 86405
+  },
+
+  "health/last_success_ts": {
+    "name": "Last Successful Poll",
+    "platform": "sensor",
+    "device_class": "timestamp",
+    "icon": "mdi:check-network-outline",
+    "value_template": "{{ as_datetime(value) }}"
+  },
+  "health/consecutive_failures": {
+    "name": "Consecutive Poll Failures",
+    "platform": "sensor",
+    "icon": "mdi:counter",
+    "value_template": "{{ value | int(default=0) }}"
+  },
+  "health/last_error": {
+    "name": "Last Poll Error",
+    "platform": "sensor",
+    "icon": "mdi:message-alert-outline",
+    "value_template": "{{ value }}"
+  },
+  "health/problem": {
+    "name": "Polling Problem",
+    "platform": "binary_sensor",
+    "device_class": "problem",
+    "icon": "mdi:alert-circle",
+    "value_template": "{{ value }}",
+    "payload_on": "ON",
+    "payload_off": "OFF"
   }
 }

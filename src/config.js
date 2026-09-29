@@ -175,6 +175,14 @@ export function loadConfig() {
 
     midnightReferencesStateFile: String(cfg?.state?.midnight_references_file ?? "").trim() || undefined,
 
+    // Nombre de cycles de polling "full" consécutifs en échec avant de lever
+    // health/problem (voir mqttService.publishHealth) — évite de déclencher
+    // une alerte HA sur un simple accroc réseau isolé.
+    healthFailureThreshold: (() => {
+      const n = Number(cfg?.health?.failure_threshold);
+      return Number.isFinite(n) && n > 0 ? n : 3;
+    })(),
+
     timeZoneName: String(cfg?.timezone?.name ?? "Europe/Paris"),
     logLevel: String(cfg?.logging?.level ?? "info"),
   };

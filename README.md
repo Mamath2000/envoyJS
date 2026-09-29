@@ -124,6 +124,7 @@ Voir [config.example.yaml](config.example.yaml).
   - Persistance: fichier (`state_file`) + mémoire process.
 - `timezone.name` : fuseau utilisé pour minuit (snapshots / yesterday).
 - `logging.level` : `silent|error|warn|info|debug`.
+- `health.failure_threshold` (défaut `3`) : nombre de cycles de polling "full" consécutifs en échec avant que `data/health/problem` passe à `ON`.
 
 > **Note Docker / mDNS** : `http://envoy.local` ne fonctionne pas toujours dans Docker. Le plus simple est de mettre l’IP dans `envoy.base_url`.
 
@@ -155,6 +156,15 @@ Pour certains compteurs, le service publie aussi :
 - `${base}/${serial}/data/{sensor}_00h` (référence minuit, retained)
 - `${base}/${serial}/data/{sensor}_today` (valeur du jour, retained)
 - `${base}/${serial}/data/{sensor}_yesterday` (valeur de la veille, retained)
+
+### Santé / observabilité
+
+À chaque cycle de polling "full" (succès ou échec), le service publie (retained) :
+
+- `${base}/${serial}/data/health/last_success_ts` : timestamp Unix (secondes) de la dernière lecture Envoy réussie. Reste figé tant que les échecs continuent — permet de mesurer la durée d'une panne.
+- `${base}/${serial}/data/health/consecutive_failures` : nombre d'échecs consécutifs.
+- `${base}/${serial}/data/health/last_error` : message de la dernière erreur, ou `"none"` si le dernier cycle a réussi (jamais de payload vide : un retained vide serait supprimé par le broker MQTT au lieu d'être stocké).
+- `${base}/${serial}/data/health/problem` : `ON`/`OFF` — passe à `ON` après `health.failure_threshold` (défaut 3) échecs consécutifs. Autodiscovery HA : `binary_sensor` (`device_class: problem`), à utiliser directement comme trigger d'automatisation/notification.
 
 ---
 

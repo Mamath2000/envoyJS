@@ -68,6 +68,11 @@ limits:
     conso_all: 120000
     conso_net: 120000
 
+health:
+  # Nombre de cycles de polling "full" consécutifs en échec avant que
+  # data/health/problem passe à ON (alerte HA). Défaut: 3.
+  failure_threshold: 3
+
 discovery:
   enabled: true
 

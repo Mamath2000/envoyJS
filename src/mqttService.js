@@ -27,6 +27,18 @@ export class EnvoyMqttService {
 
     this.haDiscoveryPublished = false;
 
+    // Observabilité du cycle de polling "full" (voir publishFullLoop /
+    // recordPollSuccess / recordPollFailure / publishHealth): permet à HA de
+    // detecter une panne prolongée (Envoy injoignable, backoff auth Enphase,
+    // etc.) via un unique binary_sensor d'alerte plutot que de surveiller
+    // indirectement l'expiration de multiples capteurs de donnees.
+    this.health = {
+      lastSuccessAt: undefined,
+      consecutiveFailures: 0,
+      lastError: undefined,
+    };
+    this.healthFailureThreshold = Math.max(1, Number(this.config.healthFailureThreshold ?? 3));
+
     this.baseTopic = this.config.mqttBaseTopic;
     this.serial = this.config.serialNumber;
     this.topicRaw = `${this.baseTopic}/${this.serial}/raw`;
@@ -401,7 +413,16 @@ export class EnvoyMqttService {
   async publishHaDiscovery(dataForFields) {
     const dailyKeys = Object.keys(this.calculateDailyValues(dataForFields));
     const yesterdayKeys = dailyKeys.map((k) => k.replace("today", "yesterday"));
-    const allFields = [...Object.keys(dataForFields), ...dailyKeys, ...yesterdayKeys];
+    // Champs de sante (voir publishHealth): jamais presents dans dataForFields
+    // (topics dedies publies separement), declares ici pour que l'autodiscovery
+    // les cree des le premier cycle plutot que d'attendre une valeur reelle.
+    const healthKeys = [
+      "health/last_success_ts",
+      "health/consecutive_failures",
+      "health/last_error",
+      "health/problem",
+    ];
+    const allFields = [...Object.keys(dataForFields), ...dailyKeys, ...yesterdayKeys, ...healthKeys];
 
     await publishHaAutodiscoveryDynamic({
       mqtt: this.mustClient(),
@@ -588,15 +609,56 @@ export class EnvoyMqttService {
         if (this.config.consoNetSensorEnabled) {
           await publishConsumptionSensors({ mqtt: this.mustClient(), topic: this.config.consoNetTopic, data: fullData, log: this.log.child("ha") });
         }
+
+        this.recordPollSuccess();
       } catch (err) {
         this.log.warn("erreur lecture full Envoy", { message: err?.message ?? String(err) });
+        this.recordPollFailure(err);
       }
+
+      await this.publishHealth();
 
       const elapsed = Date.now() - start;
       const intervalMs = Math.max(1000, Number(this.config.pollingIntervalMs ?? 60_000));
       const sleepMs = Math.max(0, intervalMs - elapsed);
       await sleep(sleepMs);
     }
+  }
+
+  recordPollSuccess() {
+    this.health.lastSuccessAt = Date.now();
+    this.health.consecutiveFailures = 0;
+    this.health.lastError = undefined;
+  }
+
+  recordPollFailure(err) {
+    this.health.consecutiveFailures += 1;
+    this.health.lastError = err?.message ?? String(err);
+  }
+
+  // Publie l'etat de sante du cycle de polling "full", a chaque iteration
+  // (succes comme echec) — voir publishFullLoop. health/problem est le
+  // binary_sensor d'alerte destine a l'automatisation HA: il ne passe a ON
+  // qu'apres healthFailureThreshold echecs consecutifs, pour ne pas alerter
+  // sur un accroc reseau isole. health/last_success_ts reste fige (retained)
+  // sur la derniere reussite tant que les echecs continuent, ce qui permet
+  // de mesurer la duree de la panne cote HA.
+  async publishHealth() {
+    const problem = this.health.consecutiveFailures >= this.healthFailureThreshold;
+    const fields = {
+      "health/consecutive_failures": this.health.consecutiveFailures,
+      "health/problem": problem ? "ON" : "OFF",
+      // "none" plutot que "": un payload retained vide est traité par le
+      // broker MQTT comme une demande de SUPPRESSION du message retained
+      // (spec MQTT), pas comme une valeur vide stockée — un abonné qui se
+      // (re)connecte après coup (ex: redemarrage HA) ne verrait alors plus
+      // rien du tout sur ce topic plutot qu'un etat "pas d'erreur" explicite.
+      "health/last_error": this.health.lastError ?? "none",
+    };
+    if (this.health.lastSuccessAt != null) {
+      fields["health/last_success_ts"] = Math.floor(this.health.lastSuccessAt / 1000);
+    }
+    await this.publishFields(this.topicData, fields, { retain: true, debug: false });
   }
 
   async publishStatus(status) {
