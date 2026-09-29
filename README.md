@@ -196,6 +196,8 @@ make docker-build
 make docker-run
 ```
 
+> **Permissions du volume `data/`** : le conteneur tourne en utilisateur non-root (`node`, uid 1000). Si `./data` appartient à un autre utilisateur sur l'hôte, le service ne pourra pas écrire `data/midnight-references-state.json` (avertissement en log, non bloquant — juste une perte de persistance des références minuit entre redémarrages). Ajuste au besoin : `chown -R 1000:1000 ./data` ou `chmod 777 ./data`.
+
 ---
 
 ## 🔍 Dépannage
