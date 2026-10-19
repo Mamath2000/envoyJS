@@ -355,7 +355,7 @@ limits:
     conso_net: 120000
 ```
 
-Valeurs par defaut identiques a l'exemple ci-dessus; un capteur non liste (ou une valeur invalide/<= 0) retombe sur le defaut. Le plafond est un seuil **absolu** en Wh/jour, volontairement pas relatif a `_00h`: l'index `_00h` d'un capteur rebaseline (ex: `eco` = prod - baseline - export) n'a aucune valeur absolue significative, et un today normal peut largement le depasser.
+Valeurs par defaut identiques a l'exemple ci-dessus; un capteur non liste (ou une valeur invalide/`<= 0`) retombe sur le defaut. Le plafond est un seuil **absolu** en Wh/jour, volontairement pas relatif a `_00h`: l'index `_00h` d'un capteur rebaseline (ex: `eco` = prod - baseline - export) n'a aucune valeur absolue significative, et un today normal peut largement le depasser.
 
 #### Persistance de `midnightReferences` et `lastMidnightCheck`
 
